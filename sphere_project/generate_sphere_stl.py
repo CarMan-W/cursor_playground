@@ -63,6 +63,15 @@ def orient_outward(v1: Vec3, v2: Vec3, v3: Vec3) -> Triangle:
     return Triangle(v1=v1, v2=v2, v3=v3)
 
 
+def orient_inward(v1: Vec3, v2: Vec3, v3: Vec3) -> Triangle:
+    """Ensure triangle winding produces inward normal for origin-centered meshes."""
+    n = cross(subtract(v2, v1), subtract(v3, v1))
+    c = average(v1, v2, v3)
+    if dot(n, c) > 0.0:
+        return Triangle(v1=v1, v2=v3, v3=v2)
+    return Triangle(v1=v1, v2=v2, v3=v3)
+
+
 def build_sphere_mesh(radius_mm: float, lat_segments: int, lon_segments: int) -> List[Triangle]:
     if radius_mm <= 0.0:
         raise ValueError("Radius must be > 0.")
@@ -118,6 +127,88 @@ def build_sphere_mesh(radius_mm: float, lat_segments: int, lon_segments: int) ->
     return triangles
 
 
+def build_cube_cavity_mesh(edge_mm: float) -> List[Triangle]:
+    if edge_mm <= 0.0:
+        raise ValueError("Cube void size must be > 0.")
+
+    half = edge_mm / 2.0
+    faces: Sequence[Tuple[Vec3, Vec3, Vec3, Vec3]] = (
+        # +X
+        ((half, -half, -half), (half, half, -half), (half, half, half), (half, -half, half)),
+        # -X
+        ((-half, -half, -half), (-half, -half, half), (-half, half, half), (-half, half, -half)),
+        # +Y
+        ((-half, half, -half), (-half, half, half), (half, half, half), (half, half, -half)),
+        # -Y
+        ((-half, -half, -half), (half, -half, -half), (half, -half, half), (-half, -half, half)),
+        # +Z
+        ((-half, -half, half), (half, -half, half), (half, half, half), (-half, half, half)),
+        # -Z
+        ((-half, -half, -half), (-half, half, -half), (half, half, -half), (half, -half, -half)),
+    )
+
+    triangles: List[Triangle] = []
+    for a, b, c, d in faces:
+        triangles.append(orient_inward(a, b, c))
+        triangles.append(orient_inward(a, c, d))
+    return triangles
+
+
+def validate_internal_void(outer_radius_mm: float, void_shape: str, void_size_mm: float) -> None:
+    if void_shape == "none":
+        return
+
+    if void_size_mm <= 0.0:
+        raise ValueError("void_size must be > 0 when using an internal void.")
+
+    if void_shape == "sphere":
+        void_radius = void_size_mm / 2.0
+        if void_radius >= outer_radius_mm:
+            raise ValueError(
+                "Sphere void diameter must be smaller than the outer sphere diameter."
+            )
+        return
+
+    if void_shape == "cube":
+        half_diagonal = (void_size_mm * math.sqrt(3.0)) / 2.0
+        if half_diagonal >= outer_radius_mm:
+            raise ValueError(
+                "Cube void is too large; cube must fit fully inside the outer sphere."
+            )
+        return
+
+    raise ValueError(f"Unsupported void_shape: {void_shape}")
+
+
+def build_sphere_with_internal_void_mesh(
+    radius_mm: float,
+    lat_segments: int,
+    lon_segments: int,
+    void_shape: str,
+    void_size_mm: float,
+) -> List[Triangle]:
+    triangles = build_sphere_mesh(
+        radius_mm=radius_mm,
+        lat_segments=lat_segments,
+        lon_segments=lon_segments,
+    )
+
+    validate_internal_void(radius_mm, void_shape, void_size_mm)
+
+    if void_shape == "sphere":
+        cavity = build_sphere_mesh(
+            radius_mm=void_size_mm / 2.0,
+            lat_segments=lat_segments,
+            lon_segments=lon_segments,
+        )
+        for tri in cavity:
+            triangles.append(Triangle(v1=tri.v1, v2=tri.v3, v3=tri.v2))
+    elif void_shape == "cube":
+        triangles.extend(build_cube_cavity_mesh(void_size_mm))
+
+    return triangles
+
+
 def triangle_normal(tri: Triangle) -> Vec3:
     raw_normal = cross(subtract(tri.v2, tri.v1), subtract(tri.v3, tri.v1))
     return normalize(raw_normal)
@@ -166,21 +257,44 @@ def parse_args() -> argparse.Namespace:
         default="sphere_3mm_solid.stl",
         help="Output STL file path.",
     )
+    parser.add_argument(
+        "--void-shape",
+        type=str,
+        choices=("none", "sphere", "cube"),
+        default="none",
+        help="Internal void shape: none, sphere, or cube (default: none).",
+    )
+    parser.add_argument(
+        "--void-size",
+        type=float,
+        default=1.0,
+        help=(
+            "Internal void size in mm. Sphere uses diameter; cube uses edge length "
+            "(default: 1.0). Ignored when --void-shape=none."
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     radius = args.diameter / 2.0
-    triangles = build_sphere_mesh(
+    triangles = build_sphere_with_internal_void_mesh(
         radius_mm=radius,
         lat_segments=args.lat_segments,
         lon_segments=args.lon_segments,
+        void_shape=args.void_shape,
+        void_size_mm=args.void_size,
     )
-    write_ascii_stl(args.output, "sphere_3mm_solid", triangles)
+    solid_name = "sphere_with_internal_void" if args.void_shape != "none" else "sphere_solid"
+    write_ascii_stl(args.output, solid_name, triangles)
+    if args.void_shape == "none":
+        void_desc = "internal_void=none"
+    else:
+        void_desc = f"internal_void={args.void_shape}({args.void_size} mm)"
     print(
         f"Generated '{args.output}' with diameter={args.diameter} mm, "
-        f"facets={len(triangles)}."
+        f"{void_desc}, facets={len(triangles)}."
     )
 
 
