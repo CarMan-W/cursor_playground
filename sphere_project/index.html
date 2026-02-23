@@ -115,6 +115,40 @@
       min-height: 520px;
     }
 
+    .preview-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .zoom-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .zoom-btn {
+      width: auto;
+      min-width: 2.2rem;
+      padding: 0.45rem 0.7rem;
+      background: #3a4e8a;
+      font-size: 0.95rem;
+    }
+
+    .zoom-btn.secondary {
+      background: #566287;
+    }
+
+    .zoom-level {
+      min-width: 3.2rem;
+      text-align: center;
+      font-weight: 600;
+      color: #324266;
+    }
+
     #preview-canvas {
       width: 100%;
       height: auto;
@@ -216,6 +250,15 @@
 
     <section class="card preview-panel">
       <h2>Preview</h2>
+      <div class="preview-toolbar">
+        <div class="hint">Mouse wheel to zoom. Dragging is not required.</div>
+        <div class="zoom-controls">
+          <button id="zoom-out" class="zoom-btn" type="button" aria-label="Zoom out">-</button>
+          <span id="zoom-level" class="zoom-level" aria-live="polite">100%</span>
+          <button id="zoom-in" class="zoom-btn" type="button" aria-label="Zoom in">+</button>
+          <button id="zoom-reset" class="zoom-btn secondary" type="button" aria-label="Reset zoom">Reset</button>
+        </div>
+      </div>
       <canvas id="preview-canvas" width="780" height="520" aria-label="Mesh preview"></canvas>
       <div class="hint" id="preview-note">
         Live preview uses a lighter mesh for responsiveness.
@@ -230,6 +273,9 @@
     const PREVIEW_LON_SEGMENTS = 36;
     const PREVIEW_MAX_OBJECTS = 25;
     const PREVIEW_TRIANGLE_LIMIT = 18000;
+    const PREVIEW_BASE_CAMERA_DISTANCE_FACTOR = 4.0;
+    const PREVIEW_MIN_ZOOM = 0.4;
+    const PREVIEW_MAX_ZOOM = 4.0;
 
     function subtract(a, b) {
       return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -624,6 +670,51 @@
       return [buildSingleBodyMesh(diameter, latSegments, lonSegments, voidShape, voidSize, splitHalf)];
     }
 
+    function buildTiledSphereMeshes(
+      diameter,
+      latSegments,
+      lonSegments,
+      voidShape,
+      voidSize,
+      splitHalf,
+      arrayX,
+      arrayY,
+      arraySpacing
+    ) {
+      validateArrayConfig(arrayX, arrayY, arraySpacing);
+      if (splitHalf === "both") {
+        // Keep 3MF body order deterministic: all uppers first, then all lowers.
+        const upperMesh = buildSingleBodyMesh(
+          diameter,
+          latSegments,
+          lonSegments,
+          voidShape,
+          voidSize,
+          "up"
+        );
+        const lowerMesh = buildSingleBodyMesh(
+          diameter,
+          latSegments,
+          lonSegments,
+          voidShape,
+          voidSize,
+          "down"
+        );
+        const upperBodies = tileBodyMeshes2D([upperMesh], arrayX, arrayY, arraySpacing);
+        const lowerBodies = tileBodyMeshes2D([lowerMesh], arrayX, arrayY, arraySpacing);
+        return upperBodies.concat(lowerBodies);
+      }
+      const baseBodyMeshes = buildObjectBodyMeshes(
+        diameter,
+        latSegments,
+        lonSegments,
+        voidShape,
+        voidSize,
+        splitHalf
+      );
+      return tileBodyMeshes2D(baseBodyMeshes, arrayX, arrayY, arraySpacing);
+    }
+
     function offsetPoint(v, dx, dy, dz) {
       return [v[0] + dx, v[1] + dy, v[2] + dz];
     }
@@ -795,6 +886,49 @@
       return `sphere_${dText}mm${splitSuffix}_void_${voidShape}_${sText}mm${arraySuffix}${anchorSuffix}.${exportFormat}`;
     }
 
+    function build3mfBodyNames(modelName, splitHalf, sphereBodyCount, anchorBodyCount) {
+      const names = [];
+      if (splitHalf === "both") {
+        if (sphereBodyCount % 2 !== 0) {
+          throw new Error("split=both expects an even number of sphere bodies.");
+        }
+        const perHalf = Math.floor(sphereBodyCount / 2);
+        for (let i = 1; i <= perHalf; i += 1) {
+          names.push(`${modelName}_${i}_A`);
+        }
+        for (let i = 1; i <= perHalf; i += 1) {
+          names.push(`${modelName}_${i}_B`);
+        }
+      } else if (splitHalf === "up") {
+        if (sphereBodyCount === 1) {
+          names.push(`${modelName}_A`);
+        } else {
+          for (let i = 1; i <= sphereBodyCount; i += 1) {
+            names.push(`${modelName}_${i}_A`);
+          }
+        }
+      } else if (splitHalf === "down") {
+        if (sphereBodyCount === 1) {
+          names.push(`${modelName}_B`);
+        } else {
+          for (let i = 1; i <= sphereBodyCount; i += 1) {
+            names.push(`${modelName}_${i}_B`);
+          }
+        }
+      } else if (sphereBodyCount === 1) {
+        names.push(modelName);
+      } else {
+        for (let i = 1; i <= sphereBodyCount; i += 1) {
+          names.push(`${modelName}_${i}`);
+        }
+      }
+
+      for (let i = 1; i <= anchorBodyCount; i += 1) {
+        names.push(`anchor_${i}`);
+      }
+      return names;
+    }
+
     function buildAsciiStl(solidName, triangles) {
       const lines = [];
       lines.push(`solid ${solidName}`);
@@ -843,7 +977,10 @@
       return { vertices, triangleIndices };
     }
 
-    function build3mfModelXml(modelName, meshList) {
+    function build3mfModelXml(modelName, meshList, bodyNames = null) {
+      if (bodyNames !== null && bodyNames.length !== meshList.length) {
+        throw new Error("3MF body names length must match mesh count.");
+      }
       const lines = [];
       lines.push('<?xml version="1.0" encoding="UTF-8"?>');
       lines.push('<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">');
@@ -851,7 +988,9 @@
       for (let objId = 0; objId < meshList.length; objId += 1) {
         const triangles = meshList[objId];
         const indexed = buildIndexedMesh(triangles);
-        const bodyName = meshList.length === 1 ? modelName : `${modelName}_${objId + 1}`;
+        const bodyName = bodyNames !== null
+          ? bodyNames[objId]
+          : (meshList.length === 1 ? modelName : `${modelName}_${objId + 1}`);
         lines.push(`    <object id="${objId + 1}" type="model" name="${xmlEscape(bodyName)}">`);
         lines.push("      <mesh>");
         lines.push("        <vertices>");
@@ -991,7 +1130,7 @@
       return concatUint8Arrays([...localParts, ...centralParts, endOfCentral]);
     }
 
-    function build3mfBlob(modelName, meshList) {
+    function build3mfBlob(modelName, meshList, bodyNames = null) {
       const encoder = new TextEncoder();
       const contentTypesXml = `<?xml version="1.0" encoding="UTF-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -1004,7 +1143,7 @@
   <Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
 </Relationships>
 `;
-      const modelXml = build3mfModelXml(modelName, meshList);
+      const modelXml = build3mfModelXml(modelName, meshList, bodyNames);
       const zipBytes = createStoredZip([
         { name: "[Content_Types].xml", data: encoder.encode(contentTypesXml) },
         { name: "_rels/.rels", data: encoder.encode(rootRelsXml) },
@@ -1095,9 +1234,15 @@
 
     const previewCanvas = document.getElementById("preview-canvas");
     const previewNoteEl = document.getElementById("preview-note");
+    const zoomOutEl = document.getElementById("zoom-out");
+    const zoomInEl = document.getElementById("zoom-in");
+    const zoomResetEl = document.getElementById("zoom-reset");
+    const zoomLevelEl = document.getElementById("zoom-level");
     const previewCtx = previewCanvas.getContext("2d");
     let previewTriangles = [];
+    let previewModelRadius = 1;
     let previewAngle = 0;
+    let previewZoom = 1;
 
     function clamp01(v) {
       if (v < 0) {
@@ -1107,6 +1252,36 @@
         return 1;
       }
       return v;
+    }
+
+    function clamp(v, min, max) {
+      return Math.min(max, Math.max(min, v));
+    }
+
+    function updateZoomLevelText() {
+      zoomLevelEl.textContent = `${Math.round(previewZoom * 100)}%`;
+    }
+
+    function setPreviewZoom(nextZoom) {
+      previewZoom = clamp(nextZoom, PREVIEW_MIN_ZOOM, PREVIEW_MAX_ZOOM);
+      updateZoomLevelText();
+    }
+
+    function estimateMeshRadius(triangles) {
+      let maxRadius = 1;
+      for (const tri of triangles) {
+        for (const vertex of [tri.v1, tri.v2, tri.v3]) {
+          const radius = Math.sqrt(
+            vertex[0] * vertex[0] +
+            vertex[1] * vertex[1] +
+            vertex[2] * vertex[2]
+          );
+          if (radius > maxRadius) {
+            maxRadius = radius;
+          }
+        }
+      }
+      return maxRadius;
     }
 
     function rotatePoint(point, yaw, pitch) {
@@ -1151,23 +1326,19 @@
       const yaw = previewAngle;
       const pitch = -0.62;
       const transformed = [];
-      let maxAbs = 1.0;
 
       for (const tri of previewTriangles) {
         const a = rotatePoint(tri.v1, yaw, pitch);
         const b = rotatePoint(tri.v2, yaw, pitch);
         const c = rotatePoint(tri.v3, yaw, pitch);
         transformed.push({ a, b, c });
-        maxAbs = Math.max(
-          maxAbs,
-          Math.abs(a[0]), Math.abs(a[1]), Math.abs(a[2]),
-          Math.abs(b[0]), Math.abs(b[1]), Math.abs(b[2]),
-          Math.abs(c[0]), Math.abs(c[1]), Math.abs(c[2])
-        );
       }
 
-      const cameraDistance = maxAbs * 3.4;
-      const scale = Math.min(width, height) * 0.94;
+      const baseRadius = Math.max(previewModelRadius, 1e-6);
+      const baseCameraDistance = baseRadius * PREVIEW_BASE_CAMERA_DISTANCE_FACTOR;
+      const minCameraDistance = baseRadius * 1.25;
+      const cameraDistance = Math.max(minCameraDistance, baseCameraDistance / previewZoom);
+      const scale = Math.min(width, height) * 0.92;
       const centerX = width / 2;
       const centerY = height / 2;
       const lightDir = normalize([0.4, -0.85, 0.55]);
@@ -1221,20 +1392,32 @@
           notes.push("Preview does not show split-both; download output still uses separate up/down halves.");
         }
 
-        const baseBodyMeshes = buildObjectBodyMeshes(
+        let previewBodies = buildTiledSphereMeshes(
           diameter,
           PREVIEW_LAT_SEGMENTS,
           PREVIEW_LON_SEGMENTS,
           voidShape,
           voidSize,
-          previewSplitHalf
+          previewSplitHalf,
+          1,
+          1,
+          1
         );
 
-        let previewBodies = baseBodyMeshes;
         if (Number.isInteger(arrayX) && Number.isInteger(arrayY)) {
           const objectCount = arrayX * arrayY;
           if (objectCount <= PREVIEW_MAX_OBJECTS) {
-            previewBodies = tileBodyMeshes2D(baseBodyMeshes, arrayX, arrayY, arraySpacing);
+            previewBodies = buildTiledSphereMeshes(
+              diameter,
+              PREVIEW_LAT_SEGMENTS,
+              PREVIEW_LON_SEGMENTS,
+              voidShape,
+              voidSize,
+              previewSplitHalf,
+              arrayX,
+              arrayY,
+              arraySpacing
+            );
           } else {
             notes.push(`Array has ${objectCount} objects, preview shows one position for speed.`);
           }
@@ -1247,6 +1430,7 @@
         }
 
         let mesh = flattenMeshList(previewBodies);
+        previewModelRadius = estimateMeshRadius(mesh);
         if (mesh.length > PREVIEW_TRIANGLE_LIMIT) {
           const step = Math.ceil(mesh.length / PREVIEW_TRIANGLE_LIMIT);
           mesh = mesh.filter((_, idx) => idx % step === 0);
@@ -1260,6 +1444,7 @@
         previewNoteEl.className = "hint";
       } catch (error) {
         previewTriangles = [];
+        previewModelRadius = 1;
         previewNoteEl.textContent = error instanceof Error ? error.message : "Preview failed.";
         previewNoteEl.className = "hint err";
       }
@@ -1286,7 +1471,19 @@
     voidSizeEl.addEventListener("input", refreshUiAndPreview);
 
     exportFormatEl.addEventListener("change", refreshPreviewMesh);
+    previewCanvas.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      if (event.deltaY < 0) {
+        setPreviewZoom(previewZoom * 1.1);
+      } else {
+        setPreviewZoom(previewZoom / 1.1);
+      }
+    }, { passive: false });
+    zoomInEl.addEventListener("click", () => setPreviewZoom(previewZoom * 1.2));
+    zoomOutEl.addEventListener("click", () => setPreviewZoom(previewZoom / 1.2));
+    zoomResetEl.addEventListener("click", () => setPreviewZoom(1.0));
 
+    updateZoomLevelText();
     refreshUiAndPreview();
     animationLoop();
 
@@ -1306,15 +1503,17 @@
       button.textContent = "Generating...";
 
       try {
-        const baseBodyMeshes = buildObjectBodyMeshes(
+        const sphereMeshList = buildTiledSphereMeshes(
           diameter,
           LAT_SEGMENTS,
           LON_SEGMENTS,
           voidShape,
           voidSize,
-          splitHalf
+          splitHalf,
+          arrayX,
+          arrayY,
+          arraySpacing
         );
-        const sphereMeshList = tileBodyMeshes2D(baseBodyMeshes, arrayX, arrayY, arraySpacing);
         const anchorMeshList = buildCornerAnchorMeshes(
           cornerAnchors,
           diameter,
@@ -1354,7 +1553,13 @@
           const stlText = buildAsciiStl(solidName, triangles);
           downloadBlob(fileName, new Blob([stlText], { type: "model/stl" }));
         } else if (exportFormat === "3mf") {
-          downloadBlob(fileName, build3mfBlob(solidName, meshList));
+          const bodyNames = build3mfBodyNames(
+            solidName,
+            splitHalf,
+            sphereMeshList.length,
+            anchorMeshList.length
+          );
+          downloadBlob(fileName, build3mfBlob(solidName, meshList, bodyNames));
         } else {
           throw new Error(`Unsupported export format: ${exportFormat}`);
         }
