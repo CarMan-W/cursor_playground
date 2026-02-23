@@ -201,7 +201,7 @@ The page allows the user to:
 1. Enter sphere diameter in millimeters.
 2. Choose split mode (`None`, `Upper half`, `Lower half`, `Both halves`).
 3. Choose internal void shape (`None`, `Sphere`, or `Cube`).
-4. Enter void size (enabled when shape is not `None` and split is `None`).
+4. Enter void size (enabled when shape is not `None`).
 5. Set array counts (`X`, `Y`) and spacing (center-to-center, mm).
 6. Optionally enable corner anchors.
 7. Choose export format (`STL` or `3MF`).
