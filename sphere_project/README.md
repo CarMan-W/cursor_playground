@@ -11,6 +11,7 @@ It supports:
 - Solid sphere
 - Sphere with a centered spherical void
 - Sphere with a centered cube void
+- 2D array of generated objects (X by Y) with configurable center spacing
 
 It also includes a browser-based generator page where users can input sphere
 diameter, choose internal void options, and download a generated STL file directly.
@@ -37,6 +38,9 @@ python3 generate_sphere_stl.py \
   --lon-segments 96 \
   --void-shape none \
   --void-size 1.0 \
+  --array-x 1 \
+  --array-y 1 \
+  --array-spacing 100.0 \
   --output sphere_3mm_solid.stl
 ```
 
@@ -50,6 +54,13 @@ python3 generate_sphere_stl.py \
 
 - For `sphere`: void sphere diameter (mm)
 - For `cube`: void cube edge length (mm)
+
+Array options:
+
+- `--array-x`: number of objects along X axis (default `1`)
+- `--array-y`: number of objects along Y axis (default `1`)
+- `--array-spacing`: center-to-center distance in mm for X/Y array layout
+  (default `100.0`)
 
 ### Examples
 
@@ -75,6 +86,21 @@ python3 generate_sphere_stl.py \
   --output sphere_3mm_void_cube_1p0mm.stl
 ```
 
+2D array example (10 x 10, 100 mm center spacing):
+
+```bash
+cd sphere_project
+python3 generate_sphere_stl.py \
+  --diameter 3.0 \
+  --array-x 10 \
+  --array-y 10 \
+  --array-spacing 100.0 \
+  --output sphere_3mm_array_10x10_100mm.stl
+```
+
+This generates `100` spheres with center-to-center distance `100 mm`
+in both X and Y directions.
+
 Geometry constraints:
 
 - Sphere void diameter must be smaller than sphere diameter.
@@ -92,8 +118,9 @@ The page allows the user to:
 1. Enter sphere diameter in millimeters.
 2. Choose internal void shape (`None`, `Sphere`, or `Cube`).
 3. Enter void size (enabled when shape is not `None`).
-4. Click **Generate and Download STL**.
-5. Download the generated ASCII STL file.
+4. Set array counts (`X`, `Y`) and spacing (center-to-center, mm).
+5. Click **Generate and Download STL**.
+6. Download the generated ASCII STL file.
 
 For a local web server, you can run:
 

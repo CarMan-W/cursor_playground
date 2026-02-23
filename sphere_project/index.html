@@ -119,6 +119,22 @@
       <div class="hint" id="void-size-hint">Enable by choosing an internal void shape.</div>
     </div>
 
+    <div class="field">
+      <label for="array-x">Array Count X</label>
+      <input id="array-x" type="number" min="1" step="1" value="1" required>
+    </div>
+
+    <div class="field">
+      <label for="array-y">Array Count Y</label>
+      <input id="array-y" type="number" min="1" step="1" value="1" required>
+    </div>
+
+    <div class="field">
+      <label for="array-spacing">Array Spacing (mm, center-to-center)</label>
+      <input id="array-spacing" type="number" min="0.001" step="0.001" value="100.0" disabled>
+      <div class="hint" id="array-spacing-hint">Single object (1x1): spacing is ignored.</div>
+    </div>
+
     <button id="generate">Generate and Download STL</button>
     <div class="hint">
       Mesh quality is fixed at latitude=48 and longitude=96 for smooth output.
@@ -274,6 +290,18 @@
       return { v1: tri.v1, v2: tri.v3, v3: tri.v2 };
     }
 
+    function offsetPoint(v, dx, dy, dz) {
+      return [v[0] + dx, v[1] + dy, v[2] + dz];
+    }
+
+    function offsetTriangle(tri, dx, dy, dz) {
+      return {
+        v1: offsetPoint(tri.v1, dx, dy, dz),
+        v2: offsetPoint(tri.v2, dx, dy, dz),
+        v3: offsetPoint(tri.v3, dx, dy, dz)
+      };
+    }
+
     function triangleNormal(tri) {
       const raw = cross(subtract(tri.v2, tri.v1), subtract(tri.v3, tri.v1));
       return normalize(raw);
@@ -304,13 +332,16 @@
       return value.toFixed(3).replace(/\.?0+$/, "").replace(".", "p");
     }
 
-    function makeFileName(diameter, voidShape, voidSize) {
+    function makeFileName(diameter, voidShape, voidSize, arrayX, arrayY, arraySpacing) {
       const dText = formatDimension(diameter);
+      const arraySuffix = (arrayX === 1 && arrayY === 1)
+        ? ""
+        : `_arr_${arrayX}x${arrayY}_s${formatDimension(arraySpacing)}mm`;
       if (voidShape === "none") {
-        return `sphere_${dText}mm_solid.stl`;
+        return `sphere_${dText}mm_solid${arraySuffix}.stl`;
       }
       const sText = formatDimension(voidSize);
-      return `sphere_${dText}mm_void_${voidShape}_${sText}mm.stl`;
+      return `sphere_${dText}mm_void_${voidShape}_${sText}mm${arraySuffix}.stl`;
     }
 
     function setStatus(message, isError) {
@@ -379,10 +410,47 @@
       throw new Error(`Unsupported void shape: ${voidShape}`);
     }
 
+    function validateArrayConfig(arrayX, arrayY, arraySpacing) {
+      if (!Number.isInteger(arrayX) || arrayX < 1) {
+        throw new Error("Array Count X must be an integer >= 1.");
+      }
+      if (!Number.isInteger(arrayY) || arrayY < 1) {
+        throw new Error("Array Count Y must be an integer >= 1.");
+      }
+      if ((arrayX > 1 || arrayY > 1) && (!Number.isFinite(arraySpacing) || arraySpacing <= 0)) {
+        throw new Error("Array spacing must be greater than 0 when generating multiple objects.");
+      }
+    }
+
+    function tileMesh2D(baseTriangles, arrayX, arrayY, arraySpacing) {
+      validateArrayConfig(arrayX, arrayY, arraySpacing);
+      if (arrayX === 1 && arrayY === 1) {
+        return baseTriangles;
+      }
+
+      const triangles = [];
+      const xCenter = (arrayX - 1) / 2;
+      const yCenter = (arrayY - 1) / 2;
+      for (let yi = 0; yi < arrayY; yi += 1) {
+        const dy = (yi - yCenter) * arraySpacing;
+        for (let xi = 0; xi < arrayX; xi += 1) {
+          const dx = (xi - xCenter) * arraySpacing;
+          for (const tri of baseTriangles) {
+            triangles.push(offsetTriangle(tri, dx, dy, 0));
+          }
+        }
+      }
+      return triangles;
+    }
+
     const voidShapeEl = document.getElementById("void-shape");
     const voidSizeEl = document.getElementById("void-size");
     const voidSizeLabelEl = document.getElementById("void-size-label");
     const voidSizeHintEl = document.getElementById("void-size-hint");
+    const arrayXEl = document.getElementById("array-x");
+    const arrayYEl = document.getElementById("array-y");
+    const arraySpacingEl = document.getElementById("array-spacing");
+    const arraySpacingHintEl = document.getElementById("array-spacing-hint");
 
     function updateVoidSizeUi() {
       const shape = voidShapeEl.value;
@@ -408,11 +476,28 @@
     voidShapeEl.addEventListener("change", updateVoidSizeUi);
     updateVoidSizeUi();
 
+    function updateArraySpacingUi() {
+      const arrayX = Number(arrayXEl.value);
+      const arrayY = Number(arrayYEl.value);
+      const needsSpacing = (Number.isInteger(arrayX) && arrayX > 1) || (Number.isInteger(arrayY) && arrayY > 1);
+      arraySpacingEl.disabled = !needsSpacing;
+      arraySpacingHintEl.textContent = needsSpacing
+        ? "Center-to-center distance used along X and Y."
+        : "Single object (1x1): spacing is ignored.";
+    }
+
+    arrayXEl.addEventListener("input", updateArraySpacingUi);
+    arrayYEl.addEventListener("input", updateArraySpacingUi);
+    updateArraySpacingUi();
+
     document.getElementById("generate").addEventListener("click", () => {
       const button = document.getElementById("generate");
       const diameterInput = document.getElementById("diameter");
       const voidShape = voidShapeEl.value;
       const voidSize = Number(voidSizeEl.value);
+      const arrayX = Number(arrayXEl.value);
+      const arrayY = Number(arrayYEl.value);
+      const arraySpacing = Number(arraySpacingEl.value);
       const diameter = Number(diameterInput.value);
 
       if (!Number.isFinite(diameter) || diameter <= 0) {
@@ -424,13 +509,21 @@
       button.textContent = "Generating...";
 
       try {
-        const triangles = buildSphereWithOptionalVoid(diameter, voidShape, voidSize);
-        const solidName = voidShape === "none" ? "sphere_solid" : `sphere_with_${voidShape}_void`;
+        const baseTriangles = buildSphereWithOptionalVoid(diameter, voidShape, voidSize);
+        const triangles = tileMesh2D(baseTriangles, arrayX, arrayY, arraySpacing);
+        const solidName = (arrayX === 1 && arrayY === 1)
+          ? (voidShape === "none" ? "sphere_solid" : `sphere_with_${voidShape}_void`)
+          : "sphere_array";
         const stlText = buildAsciiStl(solidName, triangles);
-        const fileName = makeFileName(diameter, voidShape, voidSize);
+        const fileName = makeFileName(diameter, voidShape, voidSize, arrayX, arrayY, arraySpacing);
         downloadTextFile(fileName, stlText);
         const voidText = voidShape === "none" ? "no internal void" : `void=${voidShape} (${voidSize} mm)`;
-        setStatus(`Done. Downloaded ${fileName} with ${triangles.length} facets (${voidText}).`, false);
+        const objectCount = arrayX * arrayY;
+        const arrayText = `array=${arrayX}x${arrayY}${(arrayX > 1 || arrayY > 1) ? ` @ ${arraySpacing} mm` : ""}`;
+        setStatus(
+          `Done. Downloaded ${fileName} with ${triangles.length} facets (${voidText}, ${arrayText}, objects=${objectCount}).`,
+          false
+        );
       } catch (error) {
         setStatus(error instanceof Error ? error.message : "Failed to generate STL.", true);
       } finally {

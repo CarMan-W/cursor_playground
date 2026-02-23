@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Generate a watertight STL mesh for a solid sphere.
+"""Generate watertight STL meshes for spheres in millimeters.
 
-The mesh is centered at the origin and uses millimeters as units.
-Default output is a 3 mm diameter sphere.
+Supports:
+- Solid sphere
+- Sphere with centered internal void (sphere/cube)
+- 2D X/Y array layout with configurable center spacing
 """
 
 from __future__ import annotations
@@ -209,6 +211,52 @@ def build_sphere_with_internal_void_mesh(
     return triangles
 
 
+def validate_array_config(array_x: int, array_y: int, array_spacing_mm: float) -> None:
+    if array_x < 1:
+        raise ValueError("array_x must be >= 1.")
+    if array_y < 1:
+        raise ValueError("array_y must be >= 1.")
+    if (array_x > 1 or array_y > 1) and array_spacing_mm <= 0.0:
+        raise ValueError("array_spacing must be > 0 when array_x or array_y is greater than 1.")
+
+
+def offset_point(v: Vec3, dx: float, dy: float, dz: float) -> Vec3:
+    return (v[0] + dx, v[1] + dy, v[2] + dz)
+
+
+def offset_triangle(tri: Triangle, dx: float, dy: float, dz: float) -> Triangle:
+    return Triangle(
+        v1=offset_point(tri.v1, dx, dy, dz),
+        v2=offset_point(tri.v2, dx, dy, dz),
+        v3=offset_point(tri.v3, dx, dy, dz),
+    )
+
+
+def tile_mesh_2d(
+    base_triangles: Sequence[Triangle],
+    array_x: int,
+    array_y: int,
+    array_spacing_mm: float,
+) -> List[Triangle]:
+    validate_array_config(array_x, array_y, array_spacing_mm)
+
+    if array_x == 1 and array_y == 1:
+        return list(base_triangles)
+
+    triangles: List[Triangle] = []
+    x_center = (array_x - 1) / 2.0
+    y_center = (array_y - 1) / 2.0
+
+    for yi in range(array_y):
+        dy = (yi - y_center) * array_spacing_mm
+        for xi in range(array_x):
+            dx = (xi - x_center) * array_spacing_mm
+            for tri in base_triangles:
+                triangles.append(offset_triangle(tri, dx, dy, 0.0))
+
+    return triangles
+
+
 def triangle_normal(tri: Triangle) -> Vec3:
     raw_normal = cross(subtract(tri.v2, tri.v1), subtract(tri.v3, tri.v1))
     return normalize(raw_normal)
@@ -273,18 +321,45 @@ def parse_args() -> argparse.Namespace:
             "(default: 1.0). Ignored when --void-shape=none."
         ),
     )
+    parser.add_argument(
+        "--array-x",
+        type=int,
+        default=1,
+        help="Number of objects along X axis (default: 1).",
+    )
+    parser.add_argument(
+        "--array-y",
+        type=int,
+        default=1,
+        help="Number of objects along Y axis (default: 1).",
+    )
+    parser.add_argument(
+        "--array-spacing",
+        type=float,
+        default=100.0,
+        help=(
+            "Center-to-center spacing in mm used for the 2D array "
+            "(default: 100.0)."
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     radius = args.diameter / 2.0
-    triangles = build_sphere_with_internal_void_mesh(
+    base_triangles = build_sphere_with_internal_void_mesh(
         radius_mm=radius,
         lat_segments=args.lat_segments,
         lon_segments=args.lon_segments,
         void_shape=args.void_shape,
         void_size_mm=args.void_size,
+    )
+    triangles = tile_mesh_2d(
+        base_triangles=base_triangles,
+        array_x=args.array_x,
+        array_y=args.array_y,
+        array_spacing_mm=args.array_spacing,
     )
     solid_name = "sphere_with_internal_void" if args.void_shape != "none" else "sphere_solid"
     write_ascii_stl(args.output, solid_name, triangles)
@@ -292,9 +367,17 @@ def main() -> None:
         void_desc = "internal_void=none"
     else:
         void_desc = f"internal_void={args.void_shape}({args.void_size} mm)"
+    if args.array_x == 1 and args.array_y == 1:
+        array_desc = "array=1x1"
+    else:
+        array_desc = (
+            f"array={args.array_x}x{args.array_y}, "
+            f"spacing={args.array_spacing} mm"
+        )
     print(
         f"Generated '{args.output}' with diameter={args.diameter} mm, "
-        f"{void_desc}, facets={len(triangles)}."
+        f"{void_desc}, {array_desc}, objects={args.array_x * args.array_y}, "
+        f"facets={len(triangles)}."
     )
 
 
