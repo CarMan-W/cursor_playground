@@ -181,6 +181,13 @@ python3 generate_sphere_stl.py \
 
 - Arrays: each sphere instance is an individual 3MF body.
 - `--split-half both`: each sphere contributes **two** bodies (`up` + `down`).
+- Split body names use suffixes:
+  - upper hemisphere: `..._A`
+  - lower hemisphere: `..._B`
+- For split arrays, body order is:
+  1. all upper hemispheres (`_A`)
+  2. all lower hemispheres (`_B`)
+  3. then the 4 anchors (when `--corner-anchors` is enabled)
 - `--corner-anchors`: each anchor is also its own body.
 
 Geometry constraints:
@@ -206,6 +213,8 @@ The page allows the user to:
 6. Optionally enable corner anchors.
 7. Choose export format (`STL` or `3MF`).
 8. View a live preview window.
+   - Preview zoom is constant during rotation.
+   - Mouse wheel and `+`/`-`/`Reset` controls are available for zooming.
 9. Click **Generate and Download**.
 10. Download the generated mesh file.
 

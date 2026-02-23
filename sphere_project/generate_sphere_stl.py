@@ -570,11 +570,114 @@ def tile_body_meshes_2d(
     return tiled
 
 
+def build_tiled_sphere_meshes(
+    radius_mm: float,
+    lat_segments: int,
+    lon_segments: int,
+    void_shape: str,
+    void_size_mm: float,
+    split_half: str,
+    array_x: int,
+    array_y: int,
+    array_spacing_mm: float,
+) -> List[List[Triangle]]:
+    """Build tiled sphere meshes with split ordering suitable for 3MF body lists."""
+    validate_split_config(split_half)
+    if split_half == "both":
+        # Keep all upper halves first, then all lower halves.
+        upper_mesh = build_single_sphere_mesh(
+            radius_mm=radius_mm,
+            lat_segments=lat_segments,
+            lon_segments=lon_segments,
+            void_shape=void_shape,
+            void_size_mm=void_size_mm,
+            split_half="up",
+        )
+        lower_mesh = build_single_sphere_mesh(
+            radius_mm=radius_mm,
+            lat_segments=lat_segments,
+            lon_segments=lon_segments,
+            void_shape=void_shape,
+            void_size_mm=void_size_mm,
+            split_half="down",
+        )
+        upper_meshes = tile_body_meshes_2d(
+            base_meshes=[upper_mesh],
+            array_x=array_x,
+            array_y=array_y,
+            array_spacing_mm=array_spacing_mm,
+        )
+        lower_meshes = tile_body_meshes_2d(
+            base_meshes=[lower_mesh],
+            array_x=array_x,
+            array_y=array_y,
+            array_spacing_mm=array_spacing_mm,
+        )
+        return upper_meshes + lower_meshes
+
+    base_meshes = build_sphere_body_meshes(
+        radius_mm=radius_mm,
+        lat_segments=lat_segments,
+        lon_segments=lon_segments,
+        void_shape=void_shape,
+        void_size_mm=void_size_mm,
+        split_half=split_half,
+    )
+    return tile_body_meshes_2d(
+        base_meshes=base_meshes,
+        array_x=array_x,
+        array_y=array_y,
+        array_spacing_mm=array_spacing_mm,
+    )
+
+
 def flatten_meshes(mesh_list: Sequence[Sequence[Triangle]]) -> List[Triangle]:
     triangles: List[Triangle] = []
     for mesh in mesh_list:
         triangles.extend(mesh)
     return triangles
+
+
+def build_3mf_body_names(
+    model_name: str,
+    split_half: str,
+    sphere_body_count: int,
+    anchor_body_count: int,
+) -> List[str]:
+    names: List[str] = []
+    if split_half == "both":
+        if sphere_body_count % 2 != 0:
+            raise ValueError(
+                "split_half=both expects an even sphere body count "
+                "(upper + lower for each sphere instance)."
+            )
+        per_half_count = sphere_body_count // 2
+        for idx in range(1, per_half_count + 1):
+            names.append(f"{model_name}_{idx}_A")
+        for idx in range(1, per_half_count + 1):
+            names.append(f"{model_name}_{idx}_B")
+    elif split_half == "up":
+        if sphere_body_count == 1:
+            names.append(f"{model_name}_A")
+        else:
+            for idx in range(1, sphere_body_count + 1):
+                names.append(f"{model_name}_{idx}_A")
+    elif split_half == "down":
+        if sphere_body_count == 1:
+            names.append(f"{model_name}_B")
+        else:
+            for idx in range(1, sphere_body_count + 1):
+                names.append(f"{model_name}_{idx}_B")
+    else:
+        if sphere_body_count == 1:
+            names.append(model_name)
+        else:
+            for idx in range(1, sphere_body_count + 1):
+                names.append(f"{model_name}_{idx}")
+
+    for idx in range(1, anchor_body_count + 1):
+        names.append(f"anchor_{idx}")
+    return names
 
 
 def orient_triangle_away_from_point(
@@ -713,8 +816,13 @@ def write_3mf(
     path: str,
     model_name: str,
     mesh_list: Sequence[Sequence[Triangle]],
+    body_names: Sequence[str] | None = None,
 ) -> None:
     """Write 3MF with one object/body per mesh in mesh_list."""
+    if body_names is not None and len(body_names) != len(mesh_list):
+        raise ValueError(
+            "3MF body_names length must match number of meshes in mesh_list."
+        )
     model_lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<model unit="millimeter" xml:lang="en-US" '
@@ -723,7 +831,10 @@ def write_3mf(
     ]
     for obj_id, triangles in enumerate(mesh_list, start=1):
         vertices, indexed_triangles = build_indexed_mesh(triangles)
-        body_name = model_name if len(mesh_list) == 1 else f"{model_name}_{obj_id}"
+        if body_names is not None:
+            body_name = body_names[obj_id - 1]
+        else:
+            body_name = model_name if len(mesh_list) == 1 else f"{model_name}_{obj_id}"
         safe_name = escape(body_name, quote=True)
         model_lines.append(f'    <object id="{obj_id}" type="model" name="{safe_name}">')
         model_lines.append("      <mesh>")
@@ -778,13 +889,14 @@ def write_mesh_output(
     solid_name: str,
     triangles: Sequence[Triangle],
     mesh_list: Sequence[Sequence[Triangle]] | None = None,
+    body_names: Sequence[str] | None = None,
 ) -> None:
     if output_format == "stl":
         write_ascii_stl(path, solid_name, triangles)
         return
     if output_format == "3mf":
         bodies = mesh_list if mesh_list is not None else [triangles]
-        write_3mf(path, solid_name, bodies)
+        write_3mf(path, solid_name, bodies, body_names=body_names)
         return
     raise ValueError(f"Unsupported output format: {output_format}")
 
@@ -889,16 +1001,13 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     radius = args.diameter / 2.0
-    base_body_meshes = build_sphere_body_meshes(
+    sphere_meshes = build_tiled_sphere_meshes(
         radius_mm=radius,
         lat_segments=args.lat_segments,
         lon_segments=args.lon_segments,
         void_shape=args.void_shape,
         void_size_mm=args.void_size,
         split_half=args.split_half,
-    )
-    sphere_meshes = tile_body_meshes_2d(
-        base_meshes=base_body_meshes,
         array_x=args.array_x,
         array_y=args.array_y,
         array_spacing_mm=args.array_spacing,
@@ -927,11 +1036,23 @@ def main() -> None:
         solid_name = "sphere_solid"
 
     mesh_list: List[List[Triangle]] | None = None
+    body_names: List[str] | None = None
     if output_format == "3mf":
         mesh_list = list(all_meshes)
+        body_names = build_3mf_body_names(
+            model_name=solid_name,
+            split_half=args.split_half,
+            sphere_body_count=len(sphere_meshes),
+            anchor_body_count=len(anchor_meshes),
+        )
 
     write_mesh_output(
-        args.output, output_format, solid_name, triangles, mesh_list=mesh_list
+        args.output,
+        output_format,
+        solid_name,
+        triangles,
+        mesh_list=mesh_list,
+        body_names=body_names,
     )
 
     if args.void_shape == "none":
