@@ -1,20 +1,23 @@
 # cursor_playground
 cursor_playground
 
-## Generate sphere STL (solid or with internal void)
+## Generate sphere mesh (STL/3MF, solid/void/split)
 
-This repository includes a Python script to generate a watertight STL mesh
-for a sphere (surface representation) in millimeter units.
+This repository includes a Python script to generate watertight sphere meshes
+in millimeter units.
 
 It supports:
 
 - Solid sphere
 - Sphere with a centered spherical void
 - Sphere with a centered cube void
+- Split-half sphere output (`up`/`down`)
 - 2D array of generated objects (X by Y) with configurable center spacing
+- STL or 3MF export
 
 It also includes a browser-based generator page where users can input sphere
-diameter, choose internal void options, and download a generated STL file directly.
+diameter, preview geometry, choose internal options, and download STL/3MF
+directly.
 
 ### Run
 
@@ -23,7 +26,7 @@ cd sphere_project
 python3 generate_sphere_stl.py
 ```
 
-By default this creates a solid sphere:
+By default this creates a full solid sphere in STL:
 
 - `sphere_3mm_solid.stl`
 - Diameter: `3.0 mm` (radius `1.5 mm`)
@@ -36,13 +39,21 @@ python3 generate_sphere_stl.py \
   --diameter 3.0 \
   --lat-segments 48 \
   --lon-segments 96 \
+  --split-half none \
   --void-shape none \
   --void-size 1.0 \
   --array-x 1 \
   --array-y 1 \
   --array-spacing 100.0 \
+  --format auto \
   --output sphere_3mm_solid.stl
 ```
+
+`--split-half` options:
+
+- `none` (default): full sphere
+- `up`: upper half sphere (`Z >= 0`) with a flat, capped split face
+- `down`: lower half sphere (`Z <= 0`) with a flat, capped split face
 
 `--void-shape` options:
 
@@ -61,6 +72,12 @@ Array options:
 - `--array-y`: number of objects along Y axis (default `1`)
 - `--array-spacing`: center-to-center distance in mm for X/Y array layout
   (default `100.0`)
+
+Output format options:
+
+- `--format auto` (default): infer by output extension (`.3mf` => 3MF, else STL)
+- `--format stl`: force ASCII STL output
+- `--format 3mf`: force 3MF output
 
 ### Examples
 
@@ -101,13 +118,34 @@ python3 generate_sphere_stl.py \
 This generates `100` spheres with center-to-center distance `100 mm`
 in both X and Y directions.
 
+Split upper half example:
+
+```bash
+cd sphere_project
+python3 generate_sphere_stl.py \
+  --diameter 20 \
+  --split-half up \
+  --output sphere_20mm_half_up.stl
+```
+
+3MF export example:
+
+```bash
+cd sphere_project
+python3 generate_sphere_stl.py \
+  --diameter 3.0 \
+  --format 3mf \
+  --output sphere_3mm_solid.3mf
+```
+
 Geometry constraints:
 
 - Sphere void diameter must be smaller than sphere diameter.
 - Cube must fit inside sphere:
   `void_cube_edge * sqrt(3) < sphere_diameter`.
+- When `--split-half` is `up` or `down`, internal void must be `none`.
 
-## Web UI: input dimensions and download STL
+## Web UI: live preview and STL/3MF download
 
 Open this page in a browser:
 
@@ -116,11 +154,14 @@ Open this page in a browser:
 The page allows the user to:
 
 1. Enter sphere diameter in millimeters.
-2. Choose internal void shape (`None`, `Sphere`, or `Cube`).
-3. Enter void size (enabled when shape is not `None`).
-4. Set array counts (`X`, `Y`) and spacing (center-to-center, mm).
-5. Click **Generate and Download STL**.
-6. Download the generated ASCII STL file.
+2. Choose split mode (`None`, `Upper half`, `Lower half`).
+3. Choose internal void shape (`None`, `Sphere`, or `Cube`).
+4. Enter void size (enabled when shape is not `None` and split is `None`).
+5. Set array counts (`X`, `Y`) and spacing (center-to-center, mm).
+6. Choose export format (`STL` or `3MF`).
+7. View a live preview window.
+8. Click **Generate and Download**.
+9. Download the generated mesh file.
 
 For a local web server, you can run:
 

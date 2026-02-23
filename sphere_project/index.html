@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sphere STL Generator</title>
+  <title>Sphere Mesh Generator</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -12,23 +12,39 @@
 
     body {
       margin: 0;
-      padding: 2rem 1rem;
+      padding: 1.5rem 1rem;
       background: #f5f7fb;
       color: #202737;
     }
 
-    .card {
-      max-width: 640px;
+    .layout {
+      max-width: 1120px;
       margin: 0 auto;
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: minmax(320px, 440px) 1fr;
+      align-items: start;
+    }
+
+    .card {
       background: #ffffff;
       border-radius: 12px;
-      padding: 1.5rem;
+      padding: 1.25rem;
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
     }
 
-    h1 {
+    h1, h2 {
       margin-top: 0;
+    }
+
+    h1 {
       font-size: 1.5rem;
+      margin-bottom: 0.75rem;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      margin-bottom: 0.6rem;
     }
 
     p {
@@ -38,7 +54,7 @@
     .field {
       display: grid;
       gap: 0.4rem;
-      margin: 1rem 0;
+      margin: 0.9rem 0;
     }
 
     label {
@@ -66,6 +82,7 @@
       cursor: pointer;
       background: #2b5cff;
       color: #fff;
+      width: 100%;
     }
 
     button[disabled] {
@@ -75,12 +92,13 @@
 
     .hint {
       color: #4a5670;
-      margin-top: 0.75rem;
-      font-size: 0.95rem;
+      margin-top: 0.35rem;
+      font-size: 0.93rem;
+      line-height: 1.4;
     }
 
     #status {
-      margin-top: 1rem;
+      margin-top: 0.9rem;
       min-height: 1.4rem;
       font-weight: 600;
     }
@@ -92,60 +110,116 @@
     .err {
       color: #b42318;
     }
+
+    .preview-panel {
+      min-height: 520px;
+    }
+
+    #preview-canvas {
+      width: 100%;
+      height: auto;
+      max-height: 520px;
+      border: 1px solid #d2daeb;
+      border-radius: 10px;
+      display: block;
+      background: #eef3ff;
+    }
+
+    @media (max-width: 960px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .preview-panel {
+        min-height: auto;
+      }
+    }
   </style>
 </head>
 <body>
-  <main class="card">
-    <h1>Sphere STL Generator</h1>
-    <p>Enter a sphere diameter in millimeters, then click the button to generate and download a watertight ASCII STL file.</p>
+  <main class="layout">
+    <section class="card">
+      <h1>Sphere Mesh Generator</h1>
+      <p>Set geometry options, preview the result, then download as STL or 3MF.</p>
 
-    <div class="field">
-      <label for="diameter">Sphere Diameter (mm)</label>
-      <input id="diameter" type="number" min="0.001" step="0.001" value="3.0" required>
-    </div>
+      <div class="field">
+        <label for="diameter">Sphere Diameter (mm)</label>
+        <input id="diameter" type="number" min="0.001" step="0.001" value="3.0" required>
+      </div>
 
-    <div class="field">
-      <label for="void-shape">Internal Void Shape</label>
-      <select id="void-shape">
-        <option value="none" selected>None (solid sphere)</option>
-        <option value="sphere">Sphere</option>
-        <option value="cube">Cube</option>
-      </select>
-    </div>
+      <div class="field">
+        <label for="split-half">Split Sphere Half</label>
+        <select id="split-half">
+          <option value="none" selected>None (full sphere)</option>
+          <option value="up">Upper half (Z &gt;= 0)</option>
+          <option value="down">Lower half (Z &lt;= 0)</option>
+        </select>
+        <div class="hint" id="split-half-hint">None keeps the full sphere.</div>
+      </div>
 
-    <div class="field">
-      <label for="void-size" id="void-size-label">Void Size (mm)</label>
-      <input id="void-size" type="number" min="0.001" step="0.001" value="1.0" disabled>
-      <div class="hint" id="void-size-hint">Enable by choosing an internal void shape.</div>
-    </div>
+      <div class="field">
+        <label for="void-shape">Internal Void Shape</label>
+        <select id="void-shape">
+          <option value="none" selected>None (solid sphere)</option>
+          <option value="sphere">Sphere</option>
+          <option value="cube">Cube</option>
+        </select>
+      </div>
 
-    <div class="field">
-      <label for="array-x">Array Count X</label>
-      <input id="array-x" type="number" min="1" step="1" value="1" required>
-    </div>
+      <div class="field">
+        <label for="void-size" id="void-size-label">Void Size (mm)</label>
+        <input id="void-size" type="number" min="0.001" step="0.001" value="1.0" disabled>
+        <div class="hint" id="void-size-hint">Enable by choosing an internal void shape.</div>
+      </div>
 
-    <div class="field">
-      <label for="array-y">Array Count Y</label>
-      <input id="array-y" type="number" min="1" step="1" value="1" required>
-    </div>
+      <div class="field">
+        <label for="array-x">Array Count X</label>
+        <input id="array-x" type="number" min="1" step="1" value="1" required>
+      </div>
 
-    <div class="field">
-      <label for="array-spacing">Array Spacing (mm, center-to-center)</label>
-      <input id="array-spacing" type="number" min="0.001" step="0.001" value="100.0" disabled>
-      <div class="hint" id="array-spacing-hint">Single object (1x1): spacing is ignored.</div>
-    </div>
+      <div class="field">
+        <label for="array-y">Array Count Y</label>
+        <input id="array-y" type="number" min="1" step="1" value="1" required>
+      </div>
 
-    <button id="generate">Generate and Download STL</button>
-    <div class="hint">
-      Mesh quality is fixed at latitude=48 and longitude=96 for smooth output.
-      Void size means diameter for a spherical void and edge length for a cube void.
-    </div>
-    <div id="status" aria-live="polite"></div>
+      <div class="field">
+        <label for="array-spacing">Array Spacing (mm, center-to-center)</label>
+        <input id="array-spacing" type="number" min="0.001" step="0.001" value="100.0" disabled>
+        <div class="hint" id="array-spacing-hint">Single object (1x1): spacing is ignored.</div>
+      </div>
+
+      <div class="field">
+        <label for="export-format">Export Format</label>
+        <select id="export-format">
+          <option value="stl" selected>STL (.stl)</option>
+          <option value="3mf">3MF (.3mf)</option>
+        </select>
+      </div>
+
+      <button id="generate">Generate and Download</button>
+      <div class="hint">
+        Export mesh quality is fixed at latitude=48 and longitude=96.
+        Split mode currently exports solid hemispheres (internal void is disabled).
+      </div>
+      <div id="status" aria-live="polite"></div>
+    </section>
+
+    <section class="card preview-panel">
+      <h2>Preview</h2>
+      <canvas id="preview-canvas" width="780" height="520" aria-label="Mesh preview"></canvas>
+      <div class="hint" id="preview-note">
+        Live preview uses a lighter mesh for responsiveness.
+      </div>
+    </section>
   </main>
 
   <script>
     const LAT_SEGMENTS = 48;
     const LON_SEGMENTS = 96;
+    const PREVIEW_LAT_SEGMENTS = 18;
+    const PREVIEW_LON_SEGMENTS = 36;
+    const PREVIEW_MAX_OBJECTS = 25;
+    const PREVIEW_TRIANGLE_LIMIT = 18000;
 
     function subtract(a, b) {
       return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -211,7 +285,6 @@
       const top = [0, 0, radiusMm];
       const bottom = [0, 0, -radiusMm];
       const rings = [];
-
       for (let i = 1; i < latSegments; i += 1) {
         const theta = Math.PI * i / latSegments;
         const z = radiusMm * Math.cos(theta);
@@ -219,9 +292,11 @@
         const ring = [];
         for (let j = 0; j < lonSegments; j += 1) {
           const phi = 2 * Math.PI * j / lonSegments;
-          const x = ringRadius * Math.cos(phi);
-          const y = ringRadius * Math.sin(phi);
-          ring.push([x, y, z]);
+          ring.push([
+            ringRadius * Math.cos(phi),
+            ringRadius * Math.sin(phi),
+            z
+          ]);
         }
         rings.push(ring);
       }
@@ -231,9 +306,7 @@
       const lastRing = rings[rings.length - 1];
 
       for (let j = 0; j < lonSegments; j += 1) {
-        const v2 = firstRing[(j + 1) % lonSegments];
-        const v3 = firstRing[j];
-        triangles.push(orientOutward(top, v2, v3));
+        triangles.push(orientOutward(top, firstRing[(j + 1) % lonSegments], firstRing[j]));
       }
 
       for (let ringIdx = 0; ringIdx < rings.length - 1; ringIdx += 1) {
@@ -250,9 +323,80 @@
       }
 
       for (let j = 0; j < lonSegments; j += 1) {
-        const v2 = lastRing[j];
-        const v3 = lastRing[(j + 1) % lonSegments];
-        triangles.push(orientOutward(bottom, v2, v3));
+        triangles.push(orientOutward(bottom, lastRing[j], lastRing[(j + 1) % lonSegments]));
+      }
+
+      return triangles;
+    }
+
+    function buildHemisphereMesh(radiusMm, latSegments, lonSegments, splitHalf) {
+      if (!(radiusMm > 0)) {
+        throw new Error("Diameter must be greater than 0.");
+      }
+      if (splitHalf !== "up" && splitHalf !== "down") {
+        throw new Error("splitHalf must be 'up' or 'down'.");
+      }
+
+      const hemiLatSegments = Math.max(1, Math.floor(latSegments / 2));
+      const pole = [0, 0, splitHalf === "up" ? radiusMm : -radiusMm];
+      const rings = [];
+
+      for (let i = 1; i <= hemiLatSegments; i += 1) {
+        const theta = (Math.PI / 2) * i / hemiLatSegments;
+        const ringRadius = radiusMm * Math.sin(theta);
+        const z = (splitHalf === "up" ? 1 : -1) * radiusMm * Math.cos(theta);
+        const ring = [];
+        for (let j = 0; j < lonSegments; j += 1) {
+          const phi = 2 * Math.PI * j / lonSegments;
+          ring.push([
+            ringRadius * Math.cos(phi),
+            ringRadius * Math.sin(phi),
+            z
+          ]);
+        }
+        rings.push(ring);
+      }
+
+      const triangles = [];
+      const firstRing = rings[0];
+
+      for (let j = 0; j < lonSegments; j += 1) {
+        if (splitHalf === "up") {
+          triangles.push(orientOutward(pole, firstRing[(j + 1) % lonSegments], firstRing[j]));
+        } else {
+          triangles.push(orientOutward(pole, firstRing[j], firstRing[(j + 1) % lonSegments]));
+        }
+      }
+
+      for (let ringIdx = 0; ringIdx < rings.length - 1; ringIdx += 1) {
+        const ringA = rings[ringIdx];
+        const ringB = rings[ringIdx + 1];
+        for (let j = 0; j < lonSegments; j += 1) {
+          const v00 = ringA[j];
+          const v01 = ringA[(j + 1) % lonSegments];
+          const v10 = ringB[j];
+          const v11 = ringB[(j + 1) % lonSegments];
+          triangles.push(orientOutward(v00, v01, v11));
+          triangles.push(orientOutward(v00, v11, v10));
+        }
+      }
+
+      const center = [0, 0, 0];
+      const equator = rings[rings.length - 1];
+      for (let j = 0; j < lonSegments; j += 1) {
+        if (splitHalf === "up") {
+          triangles.push({
+            v1: center,
+            v2: equator[(j + 1) % lonSegments],
+            v3: equator[j]
+          });
+        } else {
+          triangles.push({
+            v1: center,
+            v2: equator[j],
+            v3: equator[(j + 1) % lonSegments]
+          });
+        }
       }
 
       return triangles;
@@ -264,17 +408,11 @@
       }
       const half = edgeMm / 2;
       const faces = [
-        // +X
         [[half, -half, -half], [half, half, -half], [half, half, half], [half, -half, half]],
-        // -X
         [[-half, -half, -half], [-half, -half, half], [-half, half, half], [-half, half, -half]],
-        // +Y
         [[-half, half, -half], [-half, half, half], [half, half, half], [half, half, -half]],
-        // -Y
         [[-half, -half, -half], [half, -half, -half], [half, -half, half], [-half, -half, half]],
-        // +Z
         [[-half, -half, half], [half, -half, half], [half, half, half], [-half, half, half]],
-        // -Z
         [[-half, -half, -half], [-half, half, -half], [half, half, -half], [half, -half, -half]]
       ];
 
@@ -288,78 +426,6 @@
 
     function flipTriangleWinding(tri) {
       return { v1: tri.v1, v2: tri.v3, v3: tri.v2 };
-    }
-
-    function offsetPoint(v, dx, dy, dz) {
-      return [v[0] + dx, v[1] + dy, v[2] + dz];
-    }
-
-    function offsetTriangle(tri, dx, dy, dz) {
-      return {
-        v1: offsetPoint(tri.v1, dx, dy, dz),
-        v2: offsetPoint(tri.v2, dx, dy, dz),
-        v3: offsetPoint(tri.v3, dx, dy, dz)
-      };
-    }
-
-    function triangleNormal(tri) {
-      const raw = cross(subtract(tri.v2, tri.v1), subtract(tri.v3, tri.v1));
-      return normalize(raw);
-    }
-
-    function formatNumber(n) {
-      return n.toFixed(8);
-    }
-
-    function buildAsciiStl(solidName, triangles) {
-      const lines = [];
-      lines.push(`solid ${solidName}`);
-      for (const tri of triangles) {
-        const n = triangleNormal(tri);
-        lines.push(`  facet normal ${formatNumber(n[0])} ${formatNumber(n[1])} ${formatNumber(n[2])}`);
-        lines.push("    outer loop");
-        lines.push(`      vertex ${formatNumber(tri.v1[0])} ${formatNumber(tri.v1[1])} ${formatNumber(tri.v1[2])}`);
-        lines.push(`      vertex ${formatNumber(tri.v2[0])} ${formatNumber(tri.v2[1])} ${formatNumber(tri.v2[2])}`);
-        lines.push(`      vertex ${formatNumber(tri.v3[0])} ${formatNumber(tri.v3[1])} ${formatNumber(tri.v3[2])}`);
-        lines.push("    endloop");
-        lines.push("  endfacet");
-      }
-      lines.push(`endsolid ${solidName}`);
-      return `${lines.join("\n")}\n`;
-    }
-
-    function formatDimension(value) {
-      return value.toFixed(3).replace(/\.?0+$/, "").replace(".", "p");
-    }
-
-    function makeFileName(diameter, voidShape, voidSize, arrayX, arrayY, arraySpacing) {
-      const dText = formatDimension(diameter);
-      const arraySuffix = (arrayX === 1 && arrayY === 1)
-        ? ""
-        : `_arr_${arrayX}x${arrayY}_s${formatDimension(arraySpacing)}mm`;
-      if (voidShape === "none") {
-        return `sphere_${dText}mm_solid${arraySuffix}.stl`;
-      }
-      const sText = formatDimension(voidSize);
-      return `sphere_${dText}mm_void_${voidShape}_${sText}mm${arraySuffix}.stl`;
-    }
-
-    function setStatus(message, isError) {
-      const statusEl = document.getElementById("status");
-      statusEl.textContent = message;
-      statusEl.className = isError ? "err" : "ok";
-    }
-
-    function downloadTextFile(fileName, content) {
-      const blob = new Blob([content], { type: "model/stl" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
     function validateVoidConfig(diameter, voidShape, voidSize) {
@@ -390,24 +456,54 @@
       throw new Error(`Unsupported void shape: ${voidShape}`);
     }
 
-    function buildSphereWithOptionalVoid(diameter, voidShape, voidSize) {
-      const outerTriangles = buildSphereMesh(diameter / 2, LAT_SEGMENTS, LON_SEGMENTS);
+    function validateSplitConfig(splitHalf, voidShape) {
+      if (splitHalf !== "none" && splitHalf !== "up" && splitHalf !== "down") {
+        throw new Error("Unsupported split option.");
+      }
+      if (splitHalf !== "none" && voidShape !== "none") {
+        throw new Error("Split mode currently supports only solid spheres (set internal void to None).");
+      }
+    }
+
+    function buildObjectMesh(diameter, latSegments, lonSegments, voidShape, voidSize, splitHalf) {
+      if (!Number.isFinite(diameter) || diameter <= 0) {
+        throw new Error("Please enter a valid diameter greater than 0.");
+      }
+
+      validateSplitConfig(splitHalf, voidShape);
+      const radius = diameter / 2;
+
+      if (splitHalf === "up" || splitHalf === "down") {
+        return buildHemisphereMesh(radius, latSegments, lonSegments, splitHalf);
+      }
+
+      const outerTriangles = buildSphereMesh(radius, latSegments, lonSegments);
       validateVoidConfig(diameter, voidShape, voidSize);
 
       if (voidShape === "none") {
         return outerTriangles;
       }
-
       if (voidShape === "sphere") {
-        const cavity = buildSphereMesh(voidSize / 2, LAT_SEGMENTS, LON_SEGMENTS).map(flipTriangleWinding);
-        return outerTriangles.concat(cavity);
+        return outerTriangles.concat(
+          buildSphereMesh(voidSize / 2, latSegments, lonSegments).map(flipTriangleWinding)
+        );
       }
-
       if (voidShape === "cube") {
         return outerTriangles.concat(buildCubeVoidMesh(voidSize));
       }
-
       throw new Error(`Unsupported void shape: ${voidShape}`);
+    }
+
+    function offsetPoint(v, dx, dy, dz) {
+      return [v[0] + dx, v[1] + dy, v[2] + dz];
+    }
+
+    function offsetTriangle(tri, dx, dy, dz) {
+      return {
+        v1: offsetPoint(tri.v1, dx, dy, dz),
+        v2: offsetPoint(tri.v2, dx, dy, dz),
+        v3: offsetPoint(tri.v3, dx, dy, dz)
+      };
     }
 
     function validateArrayConfig(arrayX, arrayY, arraySpacing) {
@@ -425,7 +521,7 @@
     function tileMesh2D(baseTriangles, arrayX, arrayY, arraySpacing) {
       validateArrayConfig(arrayX, arrayY, arraySpacing);
       if (arrayX === 1 && arrayY === 1) {
-        return baseTriangles;
+        return baseTriangles.slice();
       }
 
       const triangles = [];
@@ -443,6 +539,264 @@
       return triangles;
     }
 
+    function triangleNormal(tri) {
+      return normalize(cross(subtract(tri.v2, tri.v1), subtract(tri.v3, tri.v1)));
+    }
+
+    function formatNumber(n) {
+      return Number.isFinite(n) ? n.toFixed(8) : "0.00000000";
+    }
+
+    function formatDimension(value) {
+      return value.toFixed(3).replace(/\.?0+$/, "").replace(".", "p");
+    }
+
+    function makeFileName(diameter, voidShape, voidSize, arrayX, arrayY, arraySpacing, splitHalf, exportFormat) {
+      const dText = formatDimension(diameter);
+      const arraySuffix = (arrayX === 1 && arrayY === 1)
+        ? ""
+        : `_arr_${arrayX}x${arrayY}_s${formatDimension(arraySpacing)}mm`;
+      const splitSuffix = splitHalf === "none" ? "" : `_half_${splitHalf}`;
+
+      if (voidShape === "none") {
+        return `sphere_${dText}mm${splitSuffix}_solid${arraySuffix}.${exportFormat}`;
+      }
+      const sText = formatDimension(voidSize);
+      return `sphere_${dText}mm${splitSuffix}_void_${voidShape}_${sText}mm${arraySuffix}.${exportFormat}`;
+    }
+
+    function buildAsciiStl(solidName, triangles) {
+      const lines = [];
+      lines.push(`solid ${solidName}`);
+      for (const tri of triangles) {
+        const n = triangleNormal(tri);
+        lines.push(`  facet normal ${formatNumber(n[0])} ${formatNumber(n[1])} ${formatNumber(n[2])}`);
+        lines.push("    outer loop");
+        lines.push(`      vertex ${formatNumber(tri.v1[0])} ${formatNumber(tri.v1[1])} ${formatNumber(tri.v1[2])}`);
+        lines.push(`      vertex ${formatNumber(tri.v2[0])} ${formatNumber(tri.v2[1])} ${formatNumber(tri.v2[2])}`);
+        lines.push(`      vertex ${formatNumber(tri.v3[0])} ${formatNumber(tri.v3[1])} ${formatNumber(tri.v3[2])}`);
+        lines.push("    endloop");
+        lines.push("  endfacet");
+      }
+      lines.push(`endsolid ${solidName}`);
+      return `${lines.join("\n")}\n`;
+    }
+
+    function xmlEscape(text) {
+      return text
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    function buildIndexedMesh(triangles) {
+      const vertices = [];
+      const triangleIndices = [];
+      const indexByVertex = new Map();
+
+      for (const tri of triangles) {
+        const triIdx = [];
+        for (const vertex of [tri.v1, tri.v2, tri.v3]) {
+          const key = `${vertex[0].toFixed(8)},${vertex[1].toFixed(8)},${vertex[2].toFixed(8)}`;
+          let idx = indexByVertex.get(key);
+          if (idx === undefined) {
+            idx = vertices.length;
+            vertices.push(vertex);
+            indexByVertex.set(key, idx);
+          }
+          triIdx.push(idx);
+        }
+        triangleIndices.push(triIdx);
+      }
+
+      return { vertices, triangleIndices };
+    }
+
+    function build3mfModelXml(modelName, triangles) {
+      const indexed = buildIndexedMesh(triangles);
+      const lines = [];
+      lines.push('<?xml version="1.0" encoding="UTF-8"?>');
+      lines.push('<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">');
+      lines.push("  <resources>");
+      lines.push(`    <object id="1" type="model" name="${xmlEscape(modelName)}">`);
+      lines.push("      <mesh>");
+      lines.push("        <vertices>");
+      for (const vertex of indexed.vertices) {
+        lines.push(
+          `          <vertex x="${formatNumber(vertex[0])}" y="${formatNumber(vertex[1])}" z="${formatNumber(vertex[2])}"/>`
+        );
+      }
+      lines.push("        </vertices>");
+      lines.push("        <triangles>");
+      for (const tri of indexed.triangleIndices) {
+        lines.push(`          <triangle v1="${tri[0]}" v2="${tri[1]}" v3="${tri[2]}"/>`);
+      }
+      lines.push("        </triangles>");
+      lines.push("      </mesh>");
+      lines.push("    </object>");
+      lines.push("  </resources>");
+      lines.push("  <build>");
+      lines.push('    <item objectid="1"/>');
+      lines.push("  </build>");
+      lines.push("</model>");
+      lines.push("");
+      return lines.join("\n");
+    }
+
+    let crc32Table = null;
+    function getCrc32Table() {
+      if (crc32Table !== null) {
+        return crc32Table;
+      }
+      crc32Table = new Uint32Array(256);
+      for (let n = 0; n < 256; n += 1) {
+        let c = n;
+        for (let k = 0; k < 8; k += 1) {
+          c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+        }
+        crc32Table[n] = c >>> 0;
+      }
+      return crc32Table;
+    }
+
+    function crc32(bytes) {
+      const table = getCrc32Table();
+      let c = 0xffffffff;
+      for (let i = 0; i < bytes.length; i += 1) {
+        c = table[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+      }
+      return (c ^ 0xffffffff) >>> 0;
+    }
+
+    function concatUint8Arrays(parts) {
+      let totalLength = 0;
+      for (const part of parts) {
+        totalLength += part.length;
+      }
+      const out = new Uint8Array(totalLength);
+      let offset = 0;
+      for (const part of parts) {
+        out.set(part, offset);
+        offset += part.length;
+      }
+      return out;
+    }
+
+    function createStoredZip(entries) {
+      const encoder = new TextEncoder();
+      const localParts = [];
+      const centralParts = [];
+      let offset = 0;
+
+      for (const entry of entries) {
+        const nameBytes = encoder.encode(entry.name);
+        const dataBytes = entry.data;
+        const checksum = crc32(dataBytes);
+
+        const localHeader = new Uint8Array(30 + nameBytes.length);
+        const localView = new DataView(localHeader.buffer);
+        localView.setUint32(0, 0x04034b50, true);
+        localView.setUint16(4, 20, true);
+        localView.setUint16(6, 0, true);
+        localView.setUint16(8, 0, true);
+        localView.setUint16(10, 0, true);
+        localView.setUint16(12, 0, true);
+        localView.setUint32(14, checksum, true);
+        localView.setUint32(18, dataBytes.length, true);
+        localView.setUint32(22, dataBytes.length, true);
+        localView.setUint16(26, nameBytes.length, true);
+        localView.setUint16(28, 0, true);
+        localHeader.set(nameBytes, 30);
+        localParts.push(localHeader, dataBytes);
+
+        const centralHeader = new Uint8Array(46 + nameBytes.length);
+        const centralView = new DataView(centralHeader.buffer);
+        centralView.setUint32(0, 0x02014b50, true);
+        centralView.setUint16(4, 20, true);
+        centralView.setUint16(6, 20, true);
+        centralView.setUint16(8, 0, true);
+        centralView.setUint16(10, 0, true);
+        centralView.setUint16(12, 0, true);
+        centralView.setUint16(14, 0, true);
+        centralView.setUint32(16, checksum, true);
+        centralView.setUint32(20, dataBytes.length, true);
+        centralView.setUint32(24, dataBytes.length, true);
+        centralView.setUint16(28, nameBytes.length, true);
+        centralView.setUint16(30, 0, true);
+        centralView.setUint16(32, 0, true);
+        centralView.setUint16(34, 0, true);
+        centralView.setUint16(36, 0, true);
+        centralView.setUint32(38, 0, true);
+        centralView.setUint32(42, offset, true);
+        centralHeader.set(nameBytes, 46);
+        centralParts.push(centralHeader);
+
+        offset += localHeader.length + dataBytes.length;
+      }
+
+      const centralOffset = offset;
+      let centralSize = 0;
+      for (const part of centralParts) {
+        centralSize += part.length;
+      }
+
+      const endOfCentral = new Uint8Array(22);
+      const endView = new DataView(endOfCentral.buffer);
+      endView.setUint32(0, 0x06054b50, true);
+      endView.setUint16(4, 0, true);
+      endView.setUint16(6, 0, true);
+      endView.setUint16(8, entries.length, true);
+      endView.setUint16(10, entries.length, true);
+      endView.setUint32(12, centralSize, true);
+      endView.setUint32(16, centralOffset, true);
+      endView.setUint16(20, 0, true);
+
+      return concatUint8Arrays([...localParts, ...centralParts, endOfCentral]);
+    }
+
+    function build3mfBlob(modelName, triangles) {
+      const encoder = new TextEncoder();
+      const contentTypesXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>
+</Types>
+`;
+      const rootRelsXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
+</Relationships>
+`;
+      const modelXml = build3mfModelXml(modelName, triangles);
+      const zipBytes = createStoredZip([
+        { name: "[Content_Types].xml", data: encoder.encode(contentTypesXml) },
+        { name: "_rels/.rels", data: encoder.encode(rootRelsXml) },
+        { name: "3D/3dmodel.model", data: encoder.encode(modelXml) }
+      ]);
+      return new Blob([zipBytes], { type: "model/3mf" });
+    }
+
+    function downloadBlob(fileName, blob) {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    const statusEl = document.getElementById("status");
+    function setStatus(message, isError) {
+      statusEl.textContent = message;
+      statusEl.className = isError ? "err" : "ok";
+    }
+
+    const diameterEl = document.getElementById("diameter");
+    const splitHalfEl = document.getElementById("split-half");
+    const splitHalfHintEl = document.getElementById("split-half-hint");
     const voidShapeEl = document.getElementById("void-shape");
     const voidSizeEl = document.getElementById("void-size");
     const voidSizeLabelEl = document.getElementById("void-size-label");
@@ -451,8 +805,26 @@
     const arrayYEl = document.getElementById("array-y");
     const arraySpacingEl = document.getElementById("array-spacing");
     const arraySpacingHintEl = document.getElementById("array-spacing-hint");
+    const exportFormatEl = document.getElementById("export-format");
 
-    function updateVoidSizeUi() {
+    function updateVoidUi() {
+      const splitHalf = splitHalfEl.value;
+      const splitEnabled = splitHalf !== "none";
+
+      if (splitEnabled && voidShapeEl.value !== "none") {
+        voidShapeEl.value = "none";
+      }
+      voidShapeEl.disabled = splitEnabled;
+
+      if (splitEnabled) {
+        voidSizeEl.disabled = true;
+        voidSizeLabelEl.textContent = "Void Size (mm)";
+        voidSizeHintEl.textContent = "Internal void is disabled when split-half mode is enabled.";
+        splitHalfHintEl.textContent = "Split mode creates a watertight hemisphere with a flat face at Z=0.";
+        return;
+      }
+
+      splitHalfHintEl.textContent = "None keeps the full sphere.";
       const shape = voidShapeEl.value;
       const hasVoid = shape !== "none";
       voidSizeEl.disabled = !hasVoid;
@@ -473,9 +845,6 @@
       voidSizeHintEl.textContent = "The cube must fit entirely inside the sphere.";
     }
 
-    voidShapeEl.addEventListener("change", updateVoidSizeUi);
-    updateVoidSizeUi();
-
     function updateArraySpacingUi() {
       const arrayX = Number(arrayXEl.value);
       const arrayY = Number(arrayYEl.value);
@@ -486,49 +855,256 @@
         : "Single object (1x1): spacing is ignored.";
     }
 
-    arrayXEl.addEventListener("input", updateArraySpacingUi);
-    arrayYEl.addEventListener("input", updateArraySpacingUi);
-    updateArraySpacingUi();
+    const previewCanvas = document.getElementById("preview-canvas");
+    const previewNoteEl = document.getElementById("preview-note");
+    const previewCtx = previewCanvas.getContext("2d");
+    let previewTriangles = [];
+    let previewAngle = 0;
 
-    document.getElementById("generate").addEventListener("click", () => {
-      const button = document.getElementById("generate");
-      const diameterInput = document.getElementById("diameter");
+    function clamp01(v) {
+      if (v < 0) {
+        return 0;
+      }
+      if (v > 1) {
+        return 1;
+      }
+      return v;
+    }
+
+    function rotatePoint(point, yaw, pitch) {
+      const x1 = point[0] * Math.cos(yaw) - point[1] * Math.sin(yaw);
+      const y1 = point[0] * Math.sin(yaw) + point[1] * Math.cos(yaw);
+      const z1 = point[2];
+
+      const y2 = y1 * Math.cos(pitch) - z1 * Math.sin(pitch);
+      const z2 = y1 * Math.sin(pitch) + z1 * Math.cos(pitch);
+      return [x1, y2, z2];
+    }
+
+    function projectPoint(point, cameraDistance, scale, cx, cy) {
+      const denom = cameraDistance - point[1];
+      const safeDenom = denom <= 0.001 ? 0.001 : denom;
+      return [
+        cx + (point[0] / safeDenom) * scale,
+        cy - (point[2] / safeDenom) * scale
+      ];
+    }
+
+    function drawPreviewFrame() {
+      if (!previewCtx) {
+        return;
+      }
+
+      const width = previewCanvas.width;
+      const height = previewCanvas.height;
+      previewCtx.clearRect(0, 0, width, height);
+      previewCtx.fillStyle = "#eef3ff";
+      previewCtx.fillRect(0, 0, width, height);
+
+      if (!previewTriangles.length) {
+        previewCtx.fillStyle = "#6b7b98";
+        previewCtx.font = "16px Arial";
+        previewCtx.textAlign = "center";
+        previewCtx.fillText("Preview unavailable for current inputs.", width / 2, height / 2);
+        return;
+      }
+
+      previewAngle += 0.012;
+      const yaw = previewAngle;
+      const pitch = -0.62;
+      const transformed = [];
+      let maxAbs = 1.0;
+
+      for (const tri of previewTriangles) {
+        const a = rotatePoint(tri.v1, yaw, pitch);
+        const b = rotatePoint(tri.v2, yaw, pitch);
+        const c = rotatePoint(tri.v3, yaw, pitch);
+        transformed.push({ a, b, c });
+        maxAbs = Math.max(
+          maxAbs,
+          Math.abs(a[0]), Math.abs(a[1]), Math.abs(a[2]),
+          Math.abs(b[0]), Math.abs(b[1]), Math.abs(b[2]),
+          Math.abs(c[0]), Math.abs(c[1]), Math.abs(c[2])
+        );
+      }
+
+      const cameraDistance = maxAbs * 3.4;
+      const scale = Math.min(width, height) * 0.94;
+      const centerX = width / 2;
+      const centerY = height / 2;
+      const lightDir = normalize([0.4, -0.85, 0.55]);
+      const faces = [];
+
+      for (const tri of transformed) {
+        const normal = normalize(cross(subtract(tri.b, tri.a), subtract(tri.c, tri.a)));
+        const brightness = clamp01(0.32 + 0.68 * Math.max(0, dot(normal, lightDir)));
+        const depth = (tri.a[1] + tri.b[1] + tri.c[1]) / 3;
+        faces.push({
+          depth,
+          brightness,
+          p1: projectPoint(tri.a, cameraDistance, scale, centerX, centerY),
+          p2: projectPoint(tri.b, cameraDistance, scale, centerX, centerY),
+          p3: projectPoint(tri.c, cameraDistance, scale, centerX, centerY)
+        });
+      }
+
+      faces.sort((f1, f2) => f1.depth - f2.depth);
+
+      for (const face of faces) {
+        const shade = Math.round(75 + face.brightness * 145);
+        const blue = Math.round(150 + face.brightness * 95);
+        previewCtx.beginPath();
+        previewCtx.moveTo(face.p1[0], face.p1[1]);
+        previewCtx.lineTo(face.p2[0], face.p2[1]);
+        previewCtx.lineTo(face.p3[0], face.p3[1]);
+        previewCtx.closePath();
+        previewCtx.fillStyle = `rgb(${shade}, ${shade}, ${blue})`;
+        previewCtx.fill();
+        previewCtx.strokeStyle = "rgba(35, 54, 96, 0.12)";
+        previewCtx.lineWidth = 0.5;
+        previewCtx.stroke();
+      }
+    }
+
+    function refreshPreviewMesh() {
+      const diameter = Number(diameterEl.value);
+      const splitHalf = splitHalfEl.value;
       const voidShape = voidShapeEl.value;
       const voidSize = Number(voidSizeEl.value);
       const arrayX = Number(arrayXEl.value);
       const arrayY = Number(arrayYEl.value);
       const arraySpacing = Number(arraySpacingEl.value);
-      const diameter = Number(diameterInput.value);
 
-      if (!Number.isFinite(diameter) || diameter <= 0) {
-        setStatus("Please enter a valid diameter greater than 0.", true);
-        return;
+      const notes = [];
+      try {
+        const baseMesh = buildObjectMesh(
+          diameter,
+          PREVIEW_LAT_SEGMENTS,
+          PREVIEW_LON_SEGMENTS,
+          voidShape,
+          voidSize,
+          splitHalf
+        );
+
+        let mesh = baseMesh;
+        if (Number.isInteger(arrayX) && Number.isInteger(arrayY)) {
+          const objectCount = arrayX * arrayY;
+          if (objectCount <= PREVIEW_MAX_OBJECTS) {
+            mesh = tileMesh2D(baseMesh, arrayX, arrayY, arraySpacing);
+          } else {
+            notes.push(`Array has ${objectCount} objects, preview shows one object for speed.`);
+          }
+        }
+
+        if (mesh.length > PREVIEW_TRIANGLE_LIMIT) {
+          const step = Math.ceil(mesh.length / PREVIEW_TRIANGLE_LIMIT);
+          mesh = mesh.filter((_, idx) => idx % step === 0);
+          notes.push(`Preview decimated to ${mesh.length} triangles for responsiveness.`);
+        } else {
+          notes.push(`Preview triangles: ${mesh.length}.`);
+        }
+
+        previewTriangles = mesh;
+        previewNoteEl.textContent = notes.join(" ");
+        previewNoteEl.className = "hint";
+      } catch (error) {
+        previewTriangles = [];
+        previewNoteEl.textContent = error instanceof Error ? error.message : "Preview failed.";
+        previewNoteEl.className = "hint err";
       }
+    }
+
+    function animationLoop() {
+      drawPreviewFrame();
+      requestAnimationFrame(animationLoop);
+    }
+
+    function refreshUiAndPreview() {
+      updateVoidUi();
+      updateArraySpacingUi();
+      refreshPreviewMesh();
+    }
+
+    splitHalfEl.addEventListener("change", refreshUiAndPreview);
+    voidShapeEl.addEventListener("change", refreshUiAndPreview);
+    arrayXEl.addEventListener("input", refreshUiAndPreview);
+    arrayYEl.addEventListener("input", refreshUiAndPreview);
+    arraySpacingEl.addEventListener("input", refreshUiAndPreview);
+    diameterEl.addEventListener("input", refreshUiAndPreview);
+    voidSizeEl.addEventListener("input", refreshUiAndPreview);
+
+    exportFormatEl.addEventListener("change", refreshPreviewMesh);
+
+    refreshUiAndPreview();
+    animationLoop();
+
+    document.getElementById("generate").addEventListener("click", () => {
+      const button = document.getElementById("generate");
+      const diameter = Number(diameterEl.value);
+      const splitHalf = splitHalfEl.value;
+      const voidShape = voidShapeEl.value;
+      const voidSize = Number(voidSizeEl.value);
+      const arrayX = Number(arrayXEl.value);
+      const arrayY = Number(arrayYEl.value);
+      const arraySpacing = Number(arraySpacingEl.value);
+      const exportFormat = exportFormatEl.value;
 
       button.disabled = true;
       button.textContent = "Generating...";
 
       try {
-        const baseTriangles = buildSphereWithOptionalVoid(diameter, voidShape, voidSize);
+        const baseTriangles = buildObjectMesh(
+          diameter,
+          LAT_SEGMENTS,
+          LON_SEGMENTS,
+          voidShape,
+          voidSize,
+          splitHalf
+        );
         const triangles = tileMesh2D(baseTriangles, arrayX, arrayY, arraySpacing);
-        const solidName = (arrayX === 1 && arrayY === 1)
-          ? (voidShape === "none" ? "sphere_solid" : `sphere_with_${voidShape}_void`)
-          : "sphere_array";
-        const stlText = buildAsciiStl(solidName, triangles);
-        const fileName = makeFileName(diameter, voidShape, voidSize, arrayX, arrayY, arraySpacing);
-        downloadTextFile(fileName, stlText);
-        const voidText = voidShape === "none" ? "no internal void" : `void=${voidShape} (${voidSize} mm)`;
         const objectCount = arrayX * arrayY;
+
+        let solidName = "sphere_solid";
+        if (splitHalf === "up") {
+          solidName = "sphere_upper_half";
+        } else if (splitHalf === "down") {
+          solidName = "sphere_lower_half";
+        } else if (voidShape !== "none") {
+          solidName = `sphere_with_${voidShape}_void`;
+        }
+
+        const fileName = makeFileName(
+          diameter,
+          voidShape,
+          voidSize,
+          arrayX,
+          arrayY,
+          arraySpacing,
+          splitHalf,
+          exportFormat
+        );
+
+        if (exportFormat === "stl") {
+          const stlText = buildAsciiStl(solidName, triangles);
+          downloadBlob(fileName, new Blob([stlText], { type: "model/stl" }));
+        } else if (exportFormat === "3mf") {
+          downloadBlob(fileName, build3mfBlob(solidName, triangles));
+        } else {
+          throw new Error(`Unsupported export format: ${exportFormat}`);
+        }
+
+        const voidText = voidShape === "none" ? "no internal void" : `void=${voidShape} (${voidSize} mm)`;
+        const splitText = splitHalf === "none" ? "full sphere" : `split=${splitHalf}`;
         const arrayText = `array=${arrayX}x${arrayY}${(arrayX > 1 || arrayY > 1) ? ` @ ${arraySpacing} mm` : ""}`;
         setStatus(
-          `Done. Downloaded ${fileName} with ${triangles.length} facets (${voidText}, ${arrayText}, objects=${objectCount}).`,
+          `Done. Downloaded ${fileName} (${exportFormat.toUpperCase()}), facets=${triangles.length}, ${splitText}, ${voidText}, ${arrayText}, objects=${objectCount}.`,
           false
         );
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : "Failed to generate STL.", true);
+        setStatus(error instanceof Error ? error.message : "Failed to generate mesh.", true);
       } finally {
         button.disabled = false;
-        button.textContent = "Generate and Download STL";
+        button.textContent = "Generate and Download";
       }
     });
   </script>
