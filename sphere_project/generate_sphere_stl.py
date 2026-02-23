@@ -4,8 +4,9 @@
 Supports:
 - Solid sphere
 - Sphere with centered internal void (sphere/cube)
-- Split-half sphere (up/down)
+- Split sphere modes (up/down/both), including split-after-void
 - 2D X/Y array layout with configurable center spacing
+- Optional corner pyramid anchors
 - STL or 3MF export
 """
 
@@ -139,6 +140,7 @@ def build_hemisphere_mesh(
     lat_segments: int,
     lon_segments: int,
     split_half: str,
+    include_equator_cap: bool = True,
 ) -> List[Triangle]:
     """Build a watertight upper or lower half sphere with an equatorial cap."""
     if radius_mm <= 0.0:
@@ -193,26 +195,27 @@ def build_hemisphere_mesh(
             triangles.append(orient_outward(v00, v01, v11))
             triangles.append(orient_outward(v00, v11, v10))
 
-    # Equator cap keeps the half sphere watertight.
-    center: Vec3 = (0.0, 0.0, 0.0)
-    equator_ring = rings[-1]
-    for j in range(lon_segments):
-        if split_half == "up":
-            triangles.append(
-                Triangle(
-                    v1=center,
-                    v2=equator_ring[(j + 1) % lon_segments],
-                    v3=equator_ring[j],
+    if include_equator_cap:
+        # Equator cap keeps the half sphere watertight.
+        center: Vec3 = (0.0, 0.0, 0.0)
+        equator_ring = rings[-1]
+        for j in range(lon_segments):
+            if split_half == "up":
+                triangles.append(
+                    Triangle(
+                        v1=center,
+                        v2=equator_ring[(j + 1) % lon_segments],
+                        v3=equator_ring[j],
+                    )
                 )
-            )
-        else:
-            triangles.append(
-                Triangle(
-                    v1=center,
-                    v2=equator_ring[j],
-                    v3=equator_ring[(j + 1) % lon_segments],
+            else:
+                triangles.append(
+                    Triangle(
+                        v1=center,
+                        v2=equator_ring[j],
+                        v3=equator_ring[(j + 1) % lon_segments],
+                    )
                 )
-            )
 
     return triangles
 
@@ -270,17 +273,156 @@ def validate_internal_void(outer_radius_mm: float, void_shape: str, void_size_mm
     raise ValueError(f"Unsupported void_shape: {void_shape}")
 
 
-def validate_split_config(split_half: str, void_shape: str) -> None:
-    if split_half not in ("none", "up", "down"):
-        raise ValueError("split_half must be one of: none, up, down.")
-    if split_half != "none" and void_shape != "none":
-        raise ValueError(
-            "split_half=up/down currently supports only solid spheres; "
-            "set --void-shape=none."
+def validate_split_config(split_half: str) -> None:
+    if split_half not in ("none", "up", "down", "both"):
+        raise ValueError("split_half must be one of: none, up, down, both.")
+
+
+def orient_triangle_to_z(v1: Vec3, v2: Vec3, v3: Vec3, positive_z: bool) -> Triangle:
+    n = cross(subtract(v2, v1), subtract(v3, v1))
+    nz = n[2]
+    if positive_z:
+        if nz < 0.0:
+            return Triangle(v1=v1, v2=v3, v3=v2)
+    elif nz > 0.0:
+        return Triangle(v1=v1, v2=v3, v3=v2)
+    return Triangle(v1=v1, v2=v2, v3=v3)
+
+
+def build_equator_ring(radius_mm: float, lon_segments: int) -> List[Vec3]:
+    ring: List[Vec3] = []
+    for j in range(lon_segments):
+        phi = 2.0 * math.pi * j / lon_segments
+        ring.append((radius_mm * math.cos(phi), radius_mm * math.sin(phi), 0.0))
+    return ring
+
+
+def build_square_boundary_ring(half_edge_mm: float, lon_segments: int) -> List[Vec3]:
+    ring: List[Vec3] = []
+    for j in range(lon_segments):
+        phi = 2.0 * math.pi * j / lon_segments
+        c = math.cos(phi)
+        s = math.sin(phi)
+        scale = half_edge_mm / max(abs(c), abs(s))
+        ring.append((scale * c, scale * s, 0.0))
+    return ring
+
+
+def build_split_cap_between_rings(
+    outer_ring: Sequence[Vec3],
+    inner_ring: Sequence[Vec3],
+    split_half: str,
+) -> List[Triangle]:
+    if len(outer_ring) != len(inner_ring):
+        raise ValueError("Outer and inner cap rings must have the same segment count.")
+    if split_half not in ("up", "down"):
+        raise ValueError("split_half must be 'up' or 'down'.")
+
+    triangles: List[Triangle] = []
+    positive_z = split_half == "down"
+    ring_size = len(outer_ring)
+    for j in range(ring_size):
+        o0 = outer_ring[j]
+        o1 = outer_ring[(j + 1) % ring_size]
+        i0 = inner_ring[j]
+        i1 = inner_ring[(j + 1) % ring_size]
+        triangles.append(orient_triangle_to_z(o0, o1, i1, positive_z=positive_z))
+        triangles.append(orient_triangle_to_z(o0, i1, i0, positive_z=positive_z))
+    return triangles
+
+
+def build_cube_cavity_half_open_mesh(
+    edge_mm: float,
+    lon_segments: int,
+    split_half: str,
+) -> Tuple[List[Triangle], List[Vec3]]:
+    if edge_mm <= 0.0:
+        raise ValueError("Cube void size must be > 0.")
+    if split_half not in ("up", "down"):
+        raise ValueError("split_half must be 'up' or 'down'.")
+
+    half = edge_mm / 2.0
+    split_ring = build_square_boundary_ring(half, lon_segments)
+    z_far = half if split_half == "up" else -half
+    far_ring: List[Vec3] = [(x, y, z_far) for x, y, _ in split_ring]
+
+    triangles: List[Triangle] = []
+
+    # Side walls from split plane to far cube face.
+    for j in range(lon_segments):
+        s0 = split_ring[j]
+        s1 = split_ring[(j + 1) % lon_segments]
+        f0 = far_ring[j]
+        f1 = far_ring[(j + 1) % lon_segments]
+        triangles.append(orient_inward(s0, s1, f1))
+        triangles.append(orient_inward(s0, f1, f0))
+
+    # Far face of the void cavity.
+    center_far: Vec3 = (0.0, 0.0, z_far)
+    for j in range(lon_segments):
+        f0 = far_ring[j]
+        f1 = far_ring[(j + 1) % lon_segments]
+        triangles.append(orient_inward(center_far, f0, f1))
+
+    return triangles, split_ring
+
+
+def build_split_void_half_mesh(
+    radius_mm: float,
+    lat_segments: int,
+    lon_segments: int,
+    split_half: str,
+    void_shape: str,
+    void_size_mm: float,
+) -> List[Triangle]:
+    if split_half not in ("up", "down"):
+        raise ValueError("split_half must be 'up' or 'down'.")
+    if void_shape == "none":
+        return build_hemisphere_mesh(
+            radius_mm=radius_mm,
+            lat_segments=lat_segments,
+            lon_segments=lon_segments,
+            split_half=split_half,
         )
 
+    validate_internal_void(radius_mm, void_shape, void_size_mm)
 
-def build_sphere_with_internal_void_mesh(
+    outer_surface = build_hemisphere_mesh(
+        radius_mm=radius_mm,
+        lat_segments=lat_segments,
+        lon_segments=lon_segments,
+        split_half=split_half,
+        include_equator_cap=False,
+    )
+    outer_ring = build_equator_ring(radius_mm, lon_segments)
+
+    if void_shape == "sphere":
+        inner_radius = void_size_mm / 2.0
+        inner_surface = build_hemisphere_mesh(
+            radius_mm=inner_radius,
+            lat_segments=lat_segments,
+            lon_segments=lon_segments,
+            split_half=split_half,
+            include_equator_cap=False,
+        )
+        inner_surface = [
+            Triangle(v1=tri.v1, v2=tri.v3, v3=tri.v2) for tri in inner_surface
+        ]
+        inner_ring = build_equator_ring(inner_radius, lon_segments)
+    elif void_shape == "cube":
+        inner_surface, inner_ring = build_cube_cavity_half_open_mesh(
+            edge_mm=void_size_mm,
+            lon_segments=lon_segments,
+            split_half=split_half,
+        )
+    else:
+        raise ValueError(f"Unsupported void_shape: {void_shape}")
+
+    split_cap = build_split_cap_between_rings(outer_ring, inner_ring, split_half)
+    return outer_surface + inner_surface + split_cap
+
+
+def build_single_sphere_mesh(
     radius_mm: float,
     lat_segments: int,
     lon_segments: int,
@@ -288,22 +430,21 @@ def build_sphere_with_internal_void_mesh(
     void_size_mm: float,
     split_half: str,
 ) -> List[Triangle]:
-    validate_split_config(split_half, void_shape)
-    if split_half == "none":
-        triangles = build_sphere_mesh(
-            radius_mm=radius_mm,
-            lat_segments=lat_segments,
-            lon_segments=lon_segments,
-        )
-    else:
-        triangles = build_hemisphere_mesh(
+    if split_half in ("up", "down"):
+        return build_split_void_half_mesh(
             radius_mm=radius_mm,
             lat_segments=lat_segments,
             lon_segments=lon_segments,
             split_half=split_half,
+            void_shape=void_shape,
+            void_size_mm=void_size_mm,
         )
-        return triangles
 
+    triangles = build_sphere_mesh(
+        radius_mm=radius_mm,
+        lat_segments=lat_segments,
+        lon_segments=lon_segments,
+    )
     validate_internal_void(radius_mm, void_shape, void_size_mm)
 
     if void_shape == "sphere":
@@ -316,8 +457,51 @@ def build_sphere_with_internal_void_mesh(
             triangles.append(Triangle(v1=tri.v1, v2=tri.v3, v3=tri.v2))
     elif void_shape == "cube":
         triangles.extend(build_cube_cavity_mesh(void_size_mm))
+    elif void_shape != "none":
+        raise ValueError(f"Unsupported void_shape: {void_shape}")
 
     return triangles
+
+
+def build_sphere_body_meshes(
+    radius_mm: float,
+    lat_segments: int,
+    lon_segments: int,
+    void_shape: str,
+    void_size_mm: float,
+    split_half: str,
+) -> List[List[Triangle]]:
+    validate_split_config(split_half)
+    if split_half == "both":
+        return [
+            build_single_sphere_mesh(
+                radius_mm=radius_mm,
+                lat_segments=lat_segments,
+                lon_segments=lon_segments,
+                void_shape=void_shape,
+                void_size_mm=void_size_mm,
+                split_half="up",
+            ),
+            build_single_sphere_mesh(
+                radius_mm=radius_mm,
+                lat_segments=lat_segments,
+                lon_segments=lon_segments,
+                void_shape=void_shape,
+                void_size_mm=void_size_mm,
+                split_half="down",
+            ),
+        ]
+
+    return [
+        build_single_sphere_mesh(
+            radius_mm=radius_mm,
+            lat_segments=lat_segments,
+            lon_segments=lon_segments,
+            void_shape=void_shape,
+            void_size_mm=void_size_mm,
+            split_half=split_half,
+        )
+    ]
 
 
 def validate_array_config(array_x: int, array_y: int, array_spacing_mm: float) -> None:
@@ -364,6 +548,124 @@ def tile_mesh_2d(
                 triangles.append(offset_triangle(tri, dx, dy, 0.0))
 
     return triangles
+
+
+def tile_body_meshes_2d(
+    base_meshes: Sequence[Sequence[Triangle]],
+    array_x: int,
+    array_y: int,
+    array_spacing_mm: float,
+) -> List[List[Triangle]]:
+    validate_array_config(array_x, array_y, array_spacing_mm)
+
+    x_center = (array_x - 1) / 2.0
+    y_center = (array_y - 1) / 2.0
+    tiled: List[List[Triangle]] = []
+    for yi in range(array_y):
+        dy = (yi - y_center) * array_spacing_mm
+        for xi in range(array_x):
+            dx = (xi - x_center) * array_spacing_mm
+            for mesh in base_meshes:
+                tiled.append([offset_triangle(tri, dx, dy, 0.0) for tri in mesh])
+    return tiled
+
+
+def flatten_meshes(mesh_list: Sequence[Sequence[Triangle]]) -> List[Triangle]:
+    triangles: List[Triangle] = []
+    for mesh in mesh_list:
+        triangles.extend(mesh)
+    return triangles
+
+
+def orient_triangle_away_from_point(
+    v1: Vec3,
+    v2: Vec3,
+    v3: Vec3,
+    inside_point: Vec3,
+) -> Triangle:
+    n = cross(subtract(v2, v1), subtract(v3, v1))
+    c = average(v1, v2, v3)
+    to_face = subtract(c, inside_point)
+    if dot(n, to_face) < 0.0:
+        return Triangle(v1=v1, v2=v3, v3=v2)
+    return Triangle(v1=v1, v2=v2, v3=v3)
+
+
+def build_anchor_pyramid_mesh(
+    center_x_mm: float,
+    center_y_mm: float,
+    base_z_mm: float,
+    sphere_diameter_mm: float,
+) -> List[Triangle]:
+    half_footprint = 2.5  # 5 mm x 5 mm base footprint.
+    height = sphere_diameter_mm / 2.0
+    if height <= 0.0:
+        raise ValueError("sphere diameter must be > 0 for anchor generation.")
+
+    p00: Vec3 = (center_x_mm - half_footprint, center_y_mm - half_footprint, base_z_mm)
+    p10: Vec3 = (center_x_mm + half_footprint, center_y_mm - half_footprint, base_z_mm)
+    p11: Vec3 = (center_x_mm + half_footprint, center_y_mm + half_footprint, base_z_mm)
+    p01: Vec3 = (center_x_mm - half_footprint, center_y_mm + half_footprint, base_z_mm)
+    apex: Vec3 = (center_x_mm, center_y_mm, base_z_mm + height)
+
+    inside_point: Vec3 = (center_x_mm, center_y_mm, base_z_mm + (height / 4.0))
+    triangles = [
+        # Side faces.
+        orient_triangle_away_from_point(p00, p10, apex, inside_point),
+        orient_triangle_away_from_point(p10, p11, apex, inside_point),
+        orient_triangle_away_from_point(p11, p01, apex, inside_point),
+        orient_triangle_away_from_point(p01, p00, apex, inside_point),
+        # Base face.
+        orient_triangle_away_from_point(p00, p11, p10, inside_point),
+        orient_triangle_away_from_point(p00, p01, p11, inside_point),
+    ]
+    return triangles
+
+
+def corner_anchor_positions(
+    array_x: int,
+    array_y: int,
+    array_spacing_mm: float,
+) -> List[Tuple[float, float]]:
+    validate_array_config(array_x, array_y, array_spacing_mm)
+    if array_spacing_mm <= 0.0:
+        raise ValueError("array_spacing must be > 0 when using corner anchors.")
+
+    x_min = -((array_x - 1) / 2.0) * array_spacing_mm
+    x_max = ((array_x - 1) / 2.0) * array_spacing_mm
+    y_min = -((array_y - 1) / 2.0) * array_spacing_mm
+    y_max = ((array_y - 1) / 2.0) * array_spacing_mm
+
+    return [
+        (x_min - array_spacing_mm, y_min - array_spacing_mm),
+        (x_max + array_spacing_mm, y_max + array_spacing_mm),
+        (x_min - array_spacing_mm, y_max + array_spacing_mm),
+        (x_max + array_spacing_mm, y_min - array_spacing_mm),
+    ]
+
+
+def build_corner_anchor_meshes(
+    enabled: bool,
+    sphere_diameter_mm: float,
+    sphere_radius_mm: float,
+    array_x: int,
+    array_y: int,
+    array_spacing_mm: float,
+) -> List[List[Triangle]]:
+    if not enabled:
+        return []
+
+    anchors: List[List[Triangle]] = []
+    for cx, cy in corner_anchor_positions(array_x, array_y, array_spacing_mm):
+        anchors.append(
+            build_anchor_pyramid_mesh(
+                center_x_mm=cx,
+                center_y_mm=cy,
+                base_z_mm=-sphere_radius_mm,
+                sphere_diameter_mm=sphere_diameter_mm,
+            )
+        )
+    return anchors
 
 
 def triangle_normal(tri: Triangle) -> Vec3:
@@ -563,13 +865,22 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--corner-anchors",
+        action="store_true",
+        help=(
+            "Add four corner pyramid anchors at one spacing outside the array bounds. "
+            "Anchors are 5x5 mm footprint, half sphere height, and share the "
+            "same bottom Z as the spheres."
+        ),
+    )
+    parser.add_argument(
         "--split-half",
         type=str,
-        choices=("none", "up", "down"),
+        choices=("none", "up", "down", "both"),
         default="none",
         help=(
-            "Generate only the upper or lower half of the sphere "
-            "(default: none)."
+            "Split mode: none (full), up, down, or both. "
+            "Void subtraction is applied before splitting."
         ),
     )
     return parser.parse_args()
@@ -578,7 +889,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     radius = args.diameter / 2.0
-    base_triangles = build_sphere_with_internal_void_mesh(
+    base_body_meshes = build_sphere_body_meshes(
         radius_mm=radius,
         lat_segments=args.lat_segments,
         lon_segments=args.lon_segments,
@@ -586,35 +897,39 @@ def main() -> None:
         void_size_mm=args.void_size,
         split_half=args.split_half,
     )
-    output_format = resolve_output_format(args.format, args.output)
-    triangles = tile_mesh_2d(
-        base_triangles=base_triangles,
+    sphere_meshes = tile_body_meshes_2d(
+        base_meshes=base_body_meshes,
         array_x=args.array_x,
         array_y=args.array_y,
         array_spacing_mm=args.array_spacing,
     )
+    anchor_meshes = build_corner_anchor_meshes(
+        enabled=args.corner_anchors,
+        sphere_diameter_mm=args.diameter,
+        sphere_radius_mm=radius,
+        array_x=args.array_x,
+        array_y=args.array_y,
+        array_spacing_mm=args.array_spacing,
+    )
+    all_meshes = sphere_meshes + anchor_meshes
+    triangles = flatten_meshes(all_meshes)
+    output_format = resolve_output_format(args.format, args.output)
+
     if args.split_half == "up":
         solid_name = "sphere_upper_half"
     elif args.split_half == "down":
         solid_name = "sphere_lower_half"
+    elif args.split_half == "both":
+        solid_name = "sphere_split_halves"
     elif args.void_shape != "none":
         solid_name = "sphere_with_internal_void"
     else:
         solid_name = "sphere_solid"
+
     mesh_list: List[List[Triangle]] | None = None
-    if output_format == "3mf" and (args.array_x > 1 or args.array_y > 1):
-        validate_array_config(args.array_x, args.array_y, args.array_spacing)
-        x_center = (args.array_x - 1) / 2.0
-        y_center = (args.array_y - 1) / 2.0
-        mesh_list = []
-        for yi in range(args.array_y):
-            dy = (yi - y_center) * args.array_spacing
-            for xi in range(args.array_x):
-                dx = (xi - x_center) * args.array_spacing
-                body_triangles = [
-                    offset_triangle(tri, dx, dy, 0.0) for tri in base_triangles
-                ]
-                mesh_list.append(body_triangles)
+    if output_format == "3mf":
+        mesh_list = list(all_meshes)
+
     write_mesh_output(
         args.output, output_format, solid_name, triangles, mesh_list=mesh_list
     )
@@ -624,6 +939,7 @@ def main() -> None:
     else:
         void_desc = f"internal_void={args.void_shape}({args.void_size} mm)"
     split_desc = f"split_half={args.split_half}"
+    anchor_desc = "corner_anchors=on" if args.corner_anchors else "corner_anchors=off"
     if args.array_x == 1 and args.array_y == 1:
         array_desc = "array=1x1"
     else:
@@ -631,10 +947,16 @@ def main() -> None:
             f"array={args.array_x}x{args.array_y}, "
             f"spacing={args.array_spacing} mm"
         )
+    sphere_instances = args.array_x * args.array_y
+    sphere_bodies = len(sphere_meshes)
+    anchor_bodies = len(anchor_meshes)
+    total_bodies = len(all_meshes)
     print(
         f"Generated '{args.output}' with diameter={args.diameter} mm, "
         f"format={output_format}, {split_desc}, {void_desc}, {array_desc}, "
-        f"objects={args.array_x * args.array_y}, facets={len(triangles)}."
+        f"{anchor_desc}, sphere_instances={sphere_instances}, "
+        f"sphere_bodies={sphere_bodies}, anchor_bodies={anchor_bodies}, "
+        f"bodies={total_bodies}, facets={len(triangles)}."
     )
 
 
