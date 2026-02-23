@@ -62,6 +62,13 @@ def average(*points: Vec3) -> Vec3:
     )
 
 
+def snap_near_zero(value: float, eps: float = 1e-12) -> float:
+    """Normalize tiny floating error around zero to exactly 0.0."""
+    if abs(value) < eps:
+        return 0.0
+    return value
+
+
 def orient_outward(v1: Vec3, v2: Vec3, v3: Vec3) -> Triangle:
     """Ensure triangle winding produces outward normal for origin-centered sphere."""
     n = cross(subtract(v2, v1), subtract(v3, v1))
@@ -161,6 +168,7 @@ def build_hemisphere_mesh(
         z = radius_mm * math.cos(theta)
         if split_half == "down":
             z = -z
+        z = snap_near_zero(z)
         ring_radius = radius_mm * math.sin(theta)
         ring: List[Vec3] = []
         for j in range(lon_segments):
@@ -263,10 +271,11 @@ def validate_internal_void(outer_radius_mm: float, void_shape: str, void_size_mm
         return
 
     if void_shape == "cube":
-        half_diagonal = (void_size_mm * math.sqrt(3.0)) / 2.0
+        half_diagonal = (void_size_mm * math.sqrt(2.0)) / 2.0
         if half_diagonal >= outer_radius_mm:
             raise ValueError(
-                "Cube void is too large; cube must fit fully inside the outer sphere."
+                "Cube void is too large; its z=0 cross-section diagonal must fit "
+                "inside the outer sphere."
             )
         return
 

@@ -193,8 +193,12 @@ python3 generate_sphere_stl.py \
 Geometry constraints:
 
 - Sphere void diameter must be smaller than sphere diameter.
-- Cube must fit inside sphere:
-  `void_cube_edge * sqrt(3) < sphere_diameter`.
+- Cube void uses a relaxed equatorial fit check:
+  `void_cube_edge * sqrt(2) < sphere_diameter`.
+  - This allows larger cube voids (for example, `3.0 mm` sphere with `1.75 mm`
+    cube void).
+  - In these larger-void cases, cube corners may intersect the spherical shell
+    region; split meshes are stitched to avoid broken (non-manifold) seams.
 - If `--corner-anchors` is enabled, `--array-spacing` must be greater than `0`.
 
 ## Web UI: live preview and STL/3MF download

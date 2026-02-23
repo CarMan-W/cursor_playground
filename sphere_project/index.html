@@ -301,6 +301,10 @@
       return [v[0] / length, v[1] / length, v[2] / length];
     }
 
+    function snapNearZero(value, eps = 1e-12) {
+      return Math.abs(value) < eps ? 0 : value;
+    }
+
     function average(a, b, c) {
       return [
         (a[0] + b[0] + c[0]) / 3,
@@ -400,7 +404,7 @@
       for (let i = 1; i <= hemiLatSegments; i += 1) {
         const theta = (Math.PI / 2) * i / hemiLatSegments;
         const ringRadius = radiusMm * Math.sin(theta);
-        const z = (splitHalf === "up" ? 1 : -1) * radiusMm * Math.cos(theta);
+        const z = snapNearZero((splitHalf === "up" ? 1 : -1) * radiusMm * Math.cos(theta));
         const ring = [];
         for (let j = 0; j < lonSegments; j += 1) {
           const phi = 2 * Math.PI * j / lonSegments;
@@ -504,9 +508,9 @@
       }
 
       if (voidShape === "cube") {
-        const halfDiagonal = (voidSize * Math.sqrt(3)) / 2;
+        const halfDiagonal = (voidSize * Math.sqrt(2)) / 2;
         if (halfDiagonal >= outerRadius) {
-          throw new Error("Cube void is too large; cube must fit fully inside the sphere.");
+          throw new Error("Cube void is too large; its z=0 cross-section diagonal must fit inside the sphere.");
         }
         return;
       }
@@ -1210,7 +1214,7 @@
       }
 
       voidSizeLabelEl.textContent = "Void Cube Edge Length (mm)";
-      voidSizeHintEl.textContent = "The cube must fit entirely inside the sphere.";
+      voidSizeHintEl.textContent = "The cube diagonal at z=0 must fit inside the sphere (larger corner-overlap is allowed).";
     }
 
     function updateArraySpacingUi() {
