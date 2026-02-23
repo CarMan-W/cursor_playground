@@ -11,8 +11,9 @@ It supports:
 - Solid sphere
 - Sphere with a centered spherical void
 - Sphere with a centered cube void
-- Split-half sphere output (`up`/`down`)
+- Split modes (`up` / `down` / `both`) after internal-void subtraction
 - 2D array of generated objects (X by Y) with configurable center spacing
+- Optional corner pyramid anchors at extended array corners
 - STL or 3MF export
 
 It also includes a browser-based generator page where users can input sphere
@@ -52,8 +53,12 @@ python3 generate_sphere_stl.py \
 `--split-half` options:
 
 - `none` (default): full sphere
-- `up`: upper half sphere (`Z >= 0`) with a flat, capped split face
-- `down`: lower half sphere (`Z <= 0`) with a flat, capped split face
+- `up`: upper half (`Z >= 0`) with split face
+- `down`: lower half (`Z <= 0`) with split face
+- `both`: generate both upper and lower halves
+
+When a void is enabled (`--void-shape sphere|cube`), splitting is applied *after*
+void subtraction.
 
 `--void-shape` options:
 
@@ -72,6 +77,14 @@ Array options:
 - `--array-y`: number of objects along Y axis (default `1`)
 - `--array-spacing`: center-to-center distance in mm for X/Y array layout
   (default `100.0`)
+
+Corner anchor option:
+
+- `--corner-anchors`: add 4 pyramid anchors at one spacing outside the array
+  bounding corners
+  - Anchor footprint: `5 mm x 5 mm`
+  - Anchor height: half of sphere height (`sphere_diameter / 2`)
+  - Anchor bottom Z: same as sphere bottom Z
 
 Output format options:
 
@@ -128,6 +141,32 @@ python3 generate_sphere_stl.py \
   --output sphere_20mm_half_up.stl
 ```
 
+Split into both halves after cube void subtraction:
+
+```bash
+cd sphere_project
+python3 generate_sphere_stl.py \
+  --diameter 20 \
+  --void-shape cube \
+  --void-size 8 \
+  --split-half both \
+  --format 3mf \
+  --output sphere_20mm_void_cube_split_both.3mf
+```
+
+Array with corner anchors:
+
+```bash
+cd sphere_project
+python3 generate_sphere_stl.py \
+  --diameter 6 \
+  --array-x 2 \
+  --array-y 2 \
+  --array-spacing 10 \
+  --corner-anchors \
+  --output sphere_6mm_arr_2x2_anchors.stl
+```
+
 3MF export example:
 
 ```bash
@@ -138,15 +177,18 @@ python3 generate_sphere_stl.py \
   --output sphere_3mm_solid.3mf
 ```
 
-When exporting 3MF with an array (e.g. 10×10), each sphere is written as an
-individual object/body in the file so slicers can treat them separately.
+3MF body behavior:
+
+- Arrays: each sphere instance is an individual 3MF body.
+- `--split-half both`: each sphere contributes **two** bodies (`up` + `down`).
+- `--corner-anchors`: each anchor is also its own body.
 
 Geometry constraints:
 
 - Sphere void diameter must be smaller than sphere diameter.
 - Cube must fit inside sphere:
   `void_cube_edge * sqrt(3) < sphere_diameter`.
-- When `--split-half` is `up` or `down`, internal void must be `none`.
+- If `--corner-anchors` is enabled, `--array-spacing` must be greater than `0`.
 
 ## Web UI: live preview and STL/3MF download
 
@@ -157,14 +199,15 @@ Open this page in a browser:
 The page allows the user to:
 
 1. Enter sphere diameter in millimeters.
-2. Choose split mode (`None`, `Upper half`, `Lower half`).
+2. Choose split mode (`None`, `Upper half`, `Lower half`, `Both halves`).
 3. Choose internal void shape (`None`, `Sphere`, or `Cube`).
-4. Enter void size (enabled when shape is not `None` and split is `None`).
+4. Enter void size (enabled when shape is not `None`).
 5. Set array counts (`X`, `Y`) and spacing (center-to-center, mm).
-6. Choose export format (`STL` or `3MF`).
-7. View a live preview window.
-8. Click **Generate and Download**.
-9. Download the generated mesh file.
+6. Optionally enable corner anchors.
+7. Choose export format (`STL` or `3MF`).
+8. View a live preview window.
+9. Click **Generate and Download**.
+10. Download the generated mesh file.
 
 For a local web server, you can run:
 
