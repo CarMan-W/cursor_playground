@@ -9,6 +9,7 @@ for a solid sphere (surface representation) in millimeter units.
 ### Run
 
 ```bash
+cd sphere_project
 python3 generate_sphere_stl.py
 ```
 
@@ -20,6 +21,7 @@ By default this creates:
 ### Optional parameters
 
 ```bash
+cd sphere_project
 python3 generate_sphere_stl.py \
   --diameter 3.0 \
   --lat-segments 48 \
