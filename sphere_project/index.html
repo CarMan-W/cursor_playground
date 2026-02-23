@@ -613,31 +613,37 @@
       return { vertices, triangleIndices };
     }
 
-    function build3mfModelXml(modelName, triangles) {
-      const indexed = buildIndexedMesh(triangles);
+    function build3mfModelXml(modelName, meshList) {
       const lines = [];
       lines.push('<?xml version="1.0" encoding="UTF-8"?>');
       lines.push('<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">');
       lines.push("  <resources>");
-      lines.push(`    <object id="1" type="model" name="${xmlEscape(modelName)}">`);
-      lines.push("      <mesh>");
-      lines.push("        <vertices>");
-      for (const vertex of indexed.vertices) {
-        lines.push(
-          `          <vertex x="${formatNumber(vertex[0])}" y="${formatNumber(vertex[1])}" z="${formatNumber(vertex[2])}"/>`
-        );
+      for (let objId = 0; objId < meshList.length; objId += 1) {
+        const triangles = meshList[objId];
+        const indexed = buildIndexedMesh(triangles);
+        const bodyName = meshList.length === 1 ? modelName : `${modelName}_${objId + 1}`;
+        lines.push(`    <object id="${objId + 1}" type="model" name="${xmlEscape(bodyName)}">`);
+        lines.push("      <mesh>");
+        lines.push("        <vertices>");
+        for (const vertex of indexed.vertices) {
+          lines.push(
+            `          <vertex x="${formatNumber(vertex[0])}" y="${formatNumber(vertex[1])}" z="${formatNumber(vertex[2])}"/>`
+          );
+        }
+        lines.push("        </vertices>");
+        lines.push("        <triangles>");
+        for (const tri of indexed.triangleIndices) {
+          lines.push(`          <triangle v1="${tri[0]}" v2="${tri[1]}" v3="${tri[2]}"/>`);
+        }
+        lines.push("        </triangles>");
+        lines.push("      </mesh>");
+        lines.push("    </object>");
       }
-      lines.push("        </vertices>");
-      lines.push("        <triangles>");
-      for (const tri of indexed.triangleIndices) {
-        lines.push(`          <triangle v1="${tri[0]}" v2="${tri[1]}" v3="${tri[2]}"/>`);
-      }
-      lines.push("        </triangles>");
-      lines.push("      </mesh>");
-      lines.push("    </object>");
       lines.push("  </resources>");
       lines.push("  <build>");
-      lines.push('    <item objectid="1"/>');
+      for (let objId = 1; objId <= meshList.length; objId += 1) {
+        lines.push(`    <item objectid="${objId}"/>`);
+      }
       lines.push("  </build>");
       lines.push("</model>");
       lines.push("");
@@ -755,7 +761,7 @@
       return concatUint8Arrays([...localParts, ...centralParts, endOfCentral]);
     }
 
-    function build3mfBlob(modelName, triangles) {
+    function build3mfBlob(modelName, meshList) {
       const encoder = new TextEncoder();
       const contentTypesXml = `<?xml version="1.0" encoding="UTF-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -768,7 +774,7 @@
   <Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
 </Relationships>
 `;
-      const modelXml = build3mfModelXml(modelName, triangles);
+      const modelXml = build3mfModelXml(modelName, meshList);
       const zipBytes = createStoredZip([
         { name: "[Content_Types].xml", data: encoder.encode(contentTypesXml) },
         { name: "_rels/.rels", data: encoder.encode(rootRelsXml) },
@@ -1088,7 +1094,24 @@
           const stlText = buildAsciiStl(solidName, triangles);
           downloadBlob(fileName, new Blob([stlText], { type: "model/stl" }));
         } else if (exportFormat === "3mf") {
-          downloadBlob(fileName, build3mfBlob(solidName, triangles));
+          const meshList = (arrayX > 1 || arrayY > 1)
+            ? (() => {
+                const list = [];
+                const xCenter = (arrayX - 1) / 2;
+                const yCenter = (arrayY - 1) / 2;
+                for (let yi = 0; yi < arrayY; yi += 1) {
+                  const dy = (yi - yCenter) * arraySpacing;
+                  for (let xi = 0; xi < arrayX; xi += 1) {
+                    const dx = (xi - xCenter) * arraySpacing;
+                    list.push(
+                      baseTriangles.map((tri) => offsetTriangle(tri, dx, dy, 0))
+                    );
+                  }
+                }
+                return list;
+              })()
+            : [baseTriangles];
+          downloadBlob(fileName, build3mfBlob(solidName, meshList));
         } else {
           throw new Error(`Unsupported export format: ${exportFormat}`);
         }

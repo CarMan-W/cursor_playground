@@ -407,42 +407,39 @@ def build_indexed_mesh(
     return vertices, indexed_triangles
 
 
-def write_3mf(path: str, model_name: str, triangles: Sequence[Triangle]) -> None:
-    vertices, indexed_triangles = build_indexed_mesh(triangles)
-    safe_name = escape(model_name, quote=True)
-
+def write_3mf(
+    path: str,
+    model_name: str,
+    mesh_list: Sequence[Sequence[Triangle]],
+) -> None:
+    """Write 3MF with one object/body per mesh in mesh_list."""
     model_lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<model unit="millimeter" xml:lang="en-US" '
         'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">',
         "  <resources>",
-        f'    <object id="1" type="model" name="{safe_name}">',
-        "      <mesh>",
-        "        <vertices>",
     ]
-    for x, y, z in vertices:
-        model_lines.append(f'          <vertex x="{x:.8f}" y="{y:.8f}" z="{z:.8f}"/>')
-    model_lines.extend(
-        [
-            "        </vertices>",
-            "        <triangles>",
-        ]
-    )
-    for i1, i2, i3 in indexed_triangles:
-        model_lines.append(f'          <triangle v1="{i1}" v2="{i2}" v3="{i3}"/>')
-    model_lines.extend(
-        [
-            "        </triangles>",
-            "      </mesh>",
-            "    </object>",
-            "  </resources>",
-            "  <build>",
-            '    <item objectid="1"/>',
-            "  </build>",
-            "</model>",
-            "",
-        ]
-    )
+    for obj_id, triangles in enumerate(mesh_list, start=1):
+        vertices, indexed_triangles = build_indexed_mesh(triangles)
+        body_name = model_name if len(mesh_list) == 1 else f"{model_name}_{obj_id}"
+        safe_name = escape(body_name, quote=True)
+        model_lines.append(f'    <object id="{obj_id}" type="model" name="{safe_name}">')
+        model_lines.append("      <mesh>")
+        model_lines.append("        <vertices>")
+        for x, y, z in vertices:
+            model_lines.append(f'          <vertex x="{x:.8f}" y="{y:.8f}" z="{z:.8f}"/>')
+        model_lines.append("        </vertices>")
+        model_lines.append("        <triangles>")
+        for i1, i2, i3 in indexed_triangles:
+            model_lines.append(f'          <triangle v1="{i1}" v2="{i2}" v3="{i3}"/>')
+        model_lines.append("        </triangles>")
+        model_lines.append("      </mesh>")
+        model_lines.append("    </object>")
+    model_lines.append("  </resources>")
+    model_lines.append("  <build>")
+    for obj_id in range(1, len(mesh_list) + 1):
+        model_lines.append(f'    <item objectid="{obj_id}"/>')
+    model_lines.extend(["  </build>", "</model>", ""])
     model_xml = "\n".join(model_lines)
 
     content_types = """<?xml version="1.0" encoding="UTF-8"?>
@@ -478,12 +475,14 @@ def write_mesh_output(
     output_format: str,
     solid_name: str,
     triangles: Sequence[Triangle],
+    mesh_list: Sequence[Sequence[Triangle]] | None = None,
 ) -> None:
     if output_format == "stl":
         write_ascii_stl(path, solid_name, triangles)
         return
     if output_format == "3mf":
-        write_3mf(path, solid_name, triangles)
+        bodies = mesh_list if mesh_list is not None else [triangles]
+        write_3mf(path, solid_name, bodies)
         return
     raise ValueError(f"Unsupported output format: {output_format}")
 
@@ -587,13 +586,13 @@ def main() -> None:
         void_size_mm=args.void_size,
         split_half=args.split_half,
     )
+    output_format = resolve_output_format(args.format, args.output)
     triangles = tile_mesh_2d(
         base_triangles=base_triangles,
         array_x=args.array_x,
         array_y=args.array_y,
         array_spacing_mm=args.array_spacing,
     )
-    output_format = resolve_output_format(args.format, args.output)
     if args.split_half == "up":
         solid_name = "sphere_upper_half"
     elif args.split_half == "down":
@@ -602,7 +601,23 @@ def main() -> None:
         solid_name = "sphere_with_internal_void"
     else:
         solid_name = "sphere_solid"
-    write_mesh_output(args.output, output_format, solid_name, triangles)
+    mesh_list: List[List[Triangle]] | None = None
+    if output_format == "3mf" and (args.array_x > 1 or args.array_y > 1):
+        validate_array_config(args.array_x, args.array_y, args.array_spacing)
+        x_center = (args.array_x - 1) / 2.0
+        y_center = (args.array_y - 1) / 2.0
+        mesh_list = []
+        for yi in range(args.array_y):
+            dy = (yi - y_center) * args.array_spacing
+            for xi in range(args.array_x):
+                dx = (xi - x_center) * args.array_spacing
+                body_triangles = [
+                    offset_triangle(tri, dx, dy, 0.0) for tri in base_triangles
+                ]
+                mesh_list.append(body_triangles)
+    write_mesh_output(
+        args.output, output_format, solid_name, triangles, mesh_list=mesh_list
+    )
 
     if args.void_shape == "none":
         void_desc = "internal_void=none"

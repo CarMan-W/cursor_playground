@@ -138,6 +138,9 @@ python3 generate_sphere_stl.py \
   --output sphere_3mm_solid.3mf
 ```
 
+When exporting 3MF with an array (e.g. 10×10), each sphere is written as an
+individual object/body in the file so slicers can treat them separately.
+
 Geometry constraints:
 
 - Sphere void diameter must be smaller than sphere diameter.
