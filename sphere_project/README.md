@@ -6,6 +6,9 @@ cursor_playground
 This repository includes a Python script to generate a watertight STL mesh
 for a solid sphere (surface representation) in millimeter units.
 
+It also includes a browser-based generator page where users can input sphere
+diameter and download a generated STL file directly.
+
 ### Run
 
 ```bash
@@ -28,3 +31,24 @@ python3 generate_sphere_stl.py \
   --lon-segments 96 \
   --output sphere_3mm_solid.stl
 ```
+
+## Web UI: input diameter and download STL
+
+Open this page in a browser:
+
+- `sphere_project/index.html`
+
+The page allows the user to:
+
+1. Enter sphere diameter in millimeters.
+2. Click **Generate and Download STL**.
+3. Download the generated ASCII STL file.
+
+For a local web server, you can run:
+
+```bash
+cd sphere_project
+python3 -m http.server 8000
+```
+
+Then open `http://localhost:8000/index.html`.
