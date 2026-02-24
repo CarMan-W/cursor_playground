@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -33,7 +34,8 @@
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
     }
 
-    h1, h2 {
+    h1,
+    h2 {
       margin-top: 0;
     }
 
@@ -136,6 +138,7 @@
     }
   </style>
 </head>
+
 <body>
   <main class="layout">
     <section class="card">
@@ -446,7 +449,7 @@
       }
 
       if (voidShape === "cube") {
-        const halfDiagonal = (voidSize * Math.sqrt(3)) / 2;
+        const halfDiagonal = (voidSize * Math.sqrt(2)) / 2;
         if (halfDiagonal >= outerRadius) {
           throw new Error("Cube void is too large; cube must fit fully inside the sphere.");
         }
@@ -1096,20 +1099,20 @@
         } else if (exportFormat === "3mf") {
           const meshList = (arrayX > 1 || arrayY > 1)
             ? (() => {
-                const list = [];
-                const xCenter = (arrayX - 1) / 2;
-                const yCenter = (arrayY - 1) / 2;
-                for (let yi = 0; yi < arrayY; yi += 1) {
-                  const dy = (yi - yCenter) * arraySpacing;
-                  for (let xi = 0; xi < arrayX; xi += 1) {
-                    const dx = (xi - xCenter) * arraySpacing;
-                    list.push(
-                      baseTriangles.map((tri) => offsetTriangle(tri, dx, dy, 0))
-                    );
-                  }
+              const list = [];
+              const xCenter = (arrayX - 1) / 2;
+              const yCenter = (arrayY - 1) / 2;
+              for (let yi = 0; yi < arrayY; yi += 1) {
+                const dy = (yi - yCenter) * arraySpacing;
+                for (let xi = 0; xi < arrayX; xi += 1) {
+                  const dx = (xi - xCenter) * arraySpacing;
+                  list.push(
+                    baseTriangles.map((tri) => offsetTriangle(tri, dx, dy, 0))
+                  );
                 }
-                return list;
-              })()
+              }
+              return list;
+            })()
             : [baseTriangles];
           downloadBlob(fileName, build3mfBlob(solidName, meshList));
         } else {
@@ -1132,4 +1135,5 @@
     });
   </script>
 </body>
+
 </html>
