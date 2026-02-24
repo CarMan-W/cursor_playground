@@ -117,6 +117,40 @@
       min-height: 520px;
     }
 
+    .preview-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .zoom-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .zoom-btn {
+      width: auto;
+      min-width: 2.2rem;
+      padding: 0.45rem 0.7rem;
+      background: #3a4e8a;
+      font-size: 0.95rem;
+    }
+
+    .zoom-btn.secondary {
+      background: #566287;
+    }
+
+    .zoom-level {
+      min-width: 3.2rem;
+      text-align: center;
+      font-weight: 600;
+      color: #324266;
+    }
+
     #preview-canvas {
       width: 100%;
       height: auto;
@@ -156,6 +190,7 @@
           <option value="none" selected>None (full sphere)</option>
           <option value="up">Upper half (Z &gt;= 0)</option>
           <option value="down">Lower half (Z &lt;= 0)</option>
+          <option value="both">Both halves (split in middle)</option>
         </select>
         <div class="hint" id="split-half-hint">None keeps the full sphere.</div>
       </div>
@@ -192,6 +227,15 @@
       </div>
 
       <div class="field">
+        <label for="corner-anchors">Corner Anchors</label>
+        <select id="corner-anchors">
+          <option value="off" selected>Off</option>
+          <option value="on">On (4 pyramid anchors)</option>
+        </select>
+        <div class="hint">Adds anchors at one array spacing outside the array corners.</div>
+      </div>
+
+      <div class="field">
         <label for="export-format">Export Format</label>
         <select id="export-format">
           <option value="stl" selected>STL (.stl)</option>
@@ -202,13 +246,22 @@
       <button id="generate">Generate and Download</button>
       <div class="hint">
         Export mesh quality is fixed at latitude=48 and longitude=96.
-        Split mode currently exports solid hemispheres (internal void is disabled).
+        Split mode can output upper/lower/both halves after applying internal void.
       </div>
       <div id="status" aria-live="polite"></div>
     </section>
 
     <section class="card preview-panel">
       <h2>Preview</h2>
+      <div class="preview-toolbar">
+        <div class="hint">Mouse wheel to zoom. Dragging is not required.</div>
+        <div class="zoom-controls">
+          <button id="zoom-out" class="zoom-btn" type="button" aria-label="Zoom out">-</button>
+          <span id="zoom-level" class="zoom-level" aria-live="polite">100%</span>
+          <button id="zoom-in" class="zoom-btn" type="button" aria-label="Zoom in">+</button>
+          <button id="zoom-reset" class="zoom-btn secondary" type="button" aria-label="Reset zoom">Reset</button>
+        </div>
+      </div>
       <canvas id="preview-canvas" width="780" height="520" aria-label="Mesh preview"></canvas>
       <div class="hint" id="preview-note">
         Live preview uses a lighter mesh for responsiveness.
@@ -223,6 +276,9 @@
     const PREVIEW_LON_SEGMENTS = 36;
     const PREVIEW_MAX_OBJECTS = 25;
     const PREVIEW_TRIANGLE_LIMIT = 18000;
+    const PREVIEW_BASE_CAMERA_DISTANCE_FACTOR = 4.0;
+    const PREVIEW_MIN_ZOOM = 0.4;
+    const PREVIEW_MAX_ZOOM = 4.0;
 
     function subtract(a, b) {
       return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -246,6 +302,10 @@
         return [0, 0, 0];
       }
       return [v[0] / length, v[1] / length, v[2] / length];
+    }
+
+    function snapNearZero(value, eps = 1e-12) {
+      return Math.abs(value) < eps ? 0 : value;
     }
 
     function average(a, b, c) {
@@ -332,7 +392,7 @@
       return triangles;
     }
 
-    function buildHemisphereMesh(radiusMm, latSegments, lonSegments, splitHalf) {
+    function buildHemisphereMesh(radiusMm, latSegments, lonSegments, splitHalf, includeEquatorCap = true) {
       if (!(radiusMm > 0)) {
         throw new Error("Diameter must be greater than 0.");
       }
@@ -347,7 +407,7 @@
       for (let i = 1; i <= hemiLatSegments; i += 1) {
         const theta = (Math.PI / 2) * i / hemiLatSegments;
         const ringRadius = radiusMm * Math.sin(theta);
-        const z = (splitHalf === "up" ? 1 : -1) * radiusMm * Math.cos(theta);
+        const z = snapNearZero((splitHalf === "up" ? 1 : -1) * radiusMm * Math.cos(theta));
         const ring = [];
         for (let j = 0; j < lonSegments; j += 1) {
           const phi = 2 * Math.PI * j / lonSegments;
@@ -384,21 +444,23 @@
         }
       }
 
-      const center = [0, 0, 0];
-      const equator = rings[rings.length - 1];
-      for (let j = 0; j < lonSegments; j += 1) {
-        if (splitHalf === "up") {
-          triangles.push({
-            v1: center,
-            v2: equator[(j + 1) % lonSegments],
-            v3: equator[j]
-          });
-        } else {
-          triangles.push({
-            v1: center,
-            v2: equator[j],
-            v3: equator[(j + 1) % lonSegments]
-          });
+      if (includeEquatorCap) {
+        const center = [0, 0, 0];
+        const equator = rings[rings.length - 1];
+        for (let j = 0; j < lonSegments; j += 1) {
+          if (splitHalf === "up") {
+            triangles.push({
+              v1: center,
+              v2: equator[(j + 1) % lonSegments],
+              v3: equator[j]
+            });
+          } else {
+            triangles.push({
+              v1: center,
+              v2: equator[j],
+              v3: equator[(j + 1) % lonSegments]
+            });
+          }
         }
       }
 
@@ -451,7 +513,7 @@
       if (voidShape === "cube") {
         const halfDiagonal = (voidSize * Math.sqrt(2)) / 2;
         if (halfDiagonal >= outerRadius) {
-          throw new Error("Cube void is too large; cube must fit fully inside the sphere.");
+          throw new Error("Cube void is too large; its z=0 cross-section diagonal must fit inside the sphere.");
         }
         return;
       }
@@ -460,26 +522,133 @@
     }
 
     function validateSplitConfig(splitHalf, voidShape) {
-      if (splitHalf !== "none" && splitHalf !== "up" && splitHalf !== "down") {
+      if (!["none", "up", "down", "both"].includes(splitHalf)) {
         throw new Error("Unsupported split option.");
-      }
-      if (splitHalf !== "none" && voidShape !== "none") {
-        throw new Error("Split mode currently supports only solid spheres (set internal void to None).");
       }
     }
 
-    function buildObjectMesh(diameter, latSegments, lonSegments, voidShape, voidSize, splitHalf) {
+    function orientTriangleToZ(v1, v2, v3, positiveZ) {
+      const n = cross(subtract(v2, v1), subtract(v3, v1));
+      const needsFlip = positiveZ ? (n[2] < 0) : (n[2] > 0);
+      return needsFlip ? { v1, v2: v3, v3: v2 } : { v1, v2, v3 };
+    }
+
+    function buildEquatorRing(radiusMm, lonSegments) {
+      const ring = [];
+      for (let j = 0; j < lonSegments; j += 1) {
+        const phi = 2 * Math.PI * j / lonSegments;
+        ring.push([radiusMm * Math.cos(phi), radiusMm * Math.sin(phi), 0]);
+      }
+      return ring;
+    }
+
+    function buildSquareBoundaryRing(halfEdgeMm, lonSegments) {
+      const ring = [];
+      for (let j = 0; j < lonSegments; j += 1) {
+        const phi = 2 * Math.PI * j / lonSegments;
+        const c = Math.cos(phi);
+        const s = Math.sin(phi);
+        const scale = halfEdgeMm / Math.max(Math.abs(c), Math.abs(s));
+        ring.push([scale * c, scale * s, 0]);
+      }
+      return ring;
+    }
+
+    function buildSplitCapBetweenRings(outerRing, innerRing, splitHalf) {
+      if (outerRing.length !== innerRing.length) {
+        throw new Error("Split cap rings must have the same segment count.");
+      }
+      if (splitHalf !== "up" && splitHalf !== "down") {
+        throw new Error("Split cap requires splitHalf=up or down.");
+      }
+
+      const triangles = [];
+      const positiveZ = splitHalf === "down";
+      for (let j = 0; j < outerRing.length; j += 1) {
+        const o0 = outerRing[j];
+        const o1 = outerRing[(j + 1) % outerRing.length];
+        const i0 = innerRing[j];
+        const i1 = innerRing[(j + 1) % innerRing.length];
+        triangles.push(orientTriangleToZ(o0, o1, i1, positiveZ));
+        triangles.push(orientTriangleToZ(o0, i1, i0, positiveZ));
+      }
+      return triangles;
+    }
+
+    function buildCubeCavityHalfOpenMesh(edgeMm, lonSegments, splitHalf) {
+      if (!(edgeMm > 0)) {
+        throw new Error("Cube void size must be greater than 0.");
+      }
+      if (splitHalf !== "up" && splitHalf !== "down") {
+        throw new Error("Cube split cavity requires splitHalf=up or down.");
+      }
+
+      const half = edgeMm / 2;
+      const splitRing = buildSquareBoundaryRing(half, lonSegments);
+      const zFar = splitHalf === "up" ? half : -half;
+      const farRing = splitRing.map(([x, y]) => [x, y, zFar]);
+      const triangles = [];
+
+      for (let j = 0; j < lonSegments; j += 1) {
+        const s0 = splitRing[j];
+        const s1 = splitRing[(j + 1) % lonSegments];
+        const f0 = farRing[j];
+        const f1 = farRing[(j + 1) % lonSegments];
+        triangles.push(orientInward(s0, s1, f1));
+        triangles.push(orientInward(s0, f1, f0));
+      }
+
+      const centerFar = [0, 0, zFar];
+      for (let j = 0; j < lonSegments; j += 1) {
+        const f0 = farRing[j];
+        const f1 = farRing[(j + 1) % lonSegments];
+        triangles.push(orientInward(centerFar, f0, f1));
+      }
+
+      return { triangles, splitRing };
+    }
+
+    function buildSplitVoidHalfMesh(diameter, latSegments, lonSegments, voidShape, voidSize, splitHalf) {
+      const radius = diameter / 2;
+      if (voidShape === "none") {
+        return buildHemisphereMesh(radius, latSegments, lonSegments, splitHalf);
+      }
+
+      validateVoidConfig(diameter, voidShape, voidSize);
+      const outerSurface = buildHemisphereMesh(radius, latSegments, lonSegments, splitHalf, false);
+      const outerRing = buildEquatorRing(radius, lonSegments);
+
+      let innerSurface;
+      let innerRing;
+      if (voidShape === "sphere") {
+        const innerRadius = voidSize / 2;
+        innerSurface = buildHemisphereMesh(innerRadius, latSegments, lonSegments, splitHalf, false)
+          .map(flipTriangleWinding);
+        innerRing = buildEquatorRing(innerRadius, lonSegments);
+      } else if (voidShape === "cube") {
+        const cubeHalf = buildCubeCavityHalfOpenMesh(voidSize, lonSegments, splitHalf);
+        innerSurface = cubeHalf.triangles;
+        innerRing = cubeHalf.splitRing;
+      } else {
+        throw new Error(`Unsupported void shape: ${voidShape}`);
+      }
+
+      const splitCap = buildSplitCapBetweenRings(outerRing, innerRing, splitHalf);
+      return outerSurface.concat(innerSurface, splitCap);
+    }
+
+    function buildSingleBodyMesh(diameter, latSegments, lonSegments, voidShape, voidSize, splitHalf) {
       if (!Number.isFinite(diameter) || diameter <= 0) {
         throw new Error("Please enter a valid diameter greater than 0.");
       }
 
       validateSplitConfig(splitHalf, voidShape);
-      const radius = diameter / 2;
 
       if (splitHalf === "up" || splitHalf === "down") {
-        return buildHemisphereMesh(radius, latSegments, lonSegments, splitHalf);
+        return buildSplitVoidHalfMesh(diameter, latSegments, lonSegments, voidShape, voidSize, splitHalf);
       }
 
+      const radius = diameter / 2;
       const outerTriangles = buildSphereMesh(radius, latSegments, lonSegments);
       validateVoidConfig(diameter, voidShape, voidSize);
 
@@ -495,6 +664,62 @@
         return outerTriangles.concat(buildCubeVoidMesh(voidSize));
       }
       throw new Error(`Unsupported void shape: ${voidShape}`);
+    }
+
+    function buildObjectBodyMeshes(diameter, latSegments, lonSegments, voidShape, voidSize, splitHalf) {
+      validateSplitConfig(splitHalf, voidShape);
+      if (splitHalf === "both") {
+        return [
+          buildSingleBodyMesh(diameter, latSegments, lonSegments, voidShape, voidSize, "up"),
+          buildSingleBodyMesh(diameter, latSegments, lonSegments, voidShape, voidSize, "down")
+        ];
+      }
+      return [buildSingleBodyMesh(diameter, latSegments, lonSegments, voidShape, voidSize, splitHalf)];
+    }
+
+    function buildTiledSphereMeshes(
+      diameter,
+      latSegments,
+      lonSegments,
+      voidShape,
+      voidSize,
+      splitHalf,
+      arrayX,
+      arrayY,
+      arraySpacing
+    ) {
+      validateArrayConfig(arrayX, arrayY, arraySpacing);
+      if (splitHalf === "both") {
+        // Keep 3MF body order deterministic: all uppers first, then all lowers.
+        const upperMesh = buildSingleBodyMesh(
+          diameter,
+          latSegments,
+          lonSegments,
+          voidShape,
+          voidSize,
+          "up"
+        );
+        const lowerMesh = buildSingleBodyMesh(
+          diameter,
+          latSegments,
+          lonSegments,
+          voidShape,
+          voidSize,
+          "down"
+        );
+        const upperBodies = tileBodyMeshes2D([upperMesh], arrayX, arrayY, arraySpacing);
+        const lowerBodies = tileBodyMeshes2D([lowerMesh], arrayX, arrayY, arraySpacing);
+        return upperBodies.concat(lowerBodies);
+      }
+      const baseBodyMeshes = buildObjectBodyMeshes(
+        diameter,
+        latSegments,
+        lonSegments,
+        voidShape,
+        voidSize,
+        splitHalf
+      );
+      return tileBodyMeshes2D(baseBodyMeshes, arrayX, arrayY, arraySpacing);
     }
 
     function offsetPoint(v, dx, dy, dz) {
@@ -542,6 +767,93 @@
       return triangles;
     }
 
+    function tileBodyMeshes2D(baseMeshes, arrayX, arrayY, arraySpacing) {
+      validateArrayConfig(arrayX, arrayY, arraySpacing);
+      const list = [];
+      const xCenter = (arrayX - 1) / 2;
+      const yCenter = (arrayY - 1) / 2;
+      for (let yi = 0; yi < arrayY; yi += 1) {
+        const dy = (yi - yCenter) * arraySpacing;
+        for (let xi = 0; xi < arrayX; xi += 1) {
+          const dx = (xi - xCenter) * arraySpacing;
+          for (const mesh of baseMeshes) {
+            list.push(mesh.map((tri) => offsetTriangle(tri, dx, dy, 0)));
+          }
+        }
+      }
+      return list;
+    }
+
+    function flattenMeshList(meshList) {
+      const out = [];
+      for (const mesh of meshList) {
+        out.push(...mesh);
+      }
+      return out;
+    }
+
+    function orientTriangleAwayFromPoint(v1, v2, v3, insidePoint) {
+      const n = cross(subtract(v2, v1), subtract(v3, v1));
+      const c = average(v1, v2, v3);
+      const toFace = subtract(c, insidePoint);
+      if (dot(n, toFace) < 0) {
+        return { v1, v2: v3, v3: v2 };
+      }
+      return { v1, v2, v3 };
+    }
+
+    function buildAnchorPyramidMesh(centerX, centerY, baseZ, diameter) {
+      const halfFootprint = 2.5;
+      const height = diameter / 2;
+      if (!Number.isFinite(height) || height <= 0) {
+        throw new Error("Sphere diameter must be greater than 0 for anchors.");
+      }
+
+      const p00 = [centerX - halfFootprint, centerY - halfFootprint, baseZ];
+      const p10 = [centerX + halfFootprint, centerY - halfFootprint, baseZ];
+      const p11 = [centerX + halfFootprint, centerY + halfFootprint, baseZ];
+      const p01 = [centerX - halfFootprint, centerY + halfFootprint, baseZ];
+      const apex = [centerX, centerY, baseZ + height];
+      const insidePoint = [centerX, centerY, baseZ + (height / 4)];
+
+      return [
+        orientTriangleAwayFromPoint(p00, p10, apex, insidePoint),
+        orientTriangleAwayFromPoint(p10, p11, apex, insidePoint),
+        orientTriangleAwayFromPoint(p11, p01, apex, insidePoint),
+        orientTriangleAwayFromPoint(p01, p00, apex, insidePoint),
+        orientTriangleAwayFromPoint(p00, p11, p10, insidePoint),
+        orientTriangleAwayFromPoint(p00, p01, p11, insidePoint)
+      ];
+    }
+
+    function cornerAnchorPositions(arrayX, arrayY, arraySpacing) {
+      validateArrayConfig(arrayX, arrayY, arraySpacing);
+      if (!(arraySpacing > 0)) {
+        throw new Error("Array spacing must be greater than 0 when corner anchors are enabled.");
+      }
+
+      const xMin = -((arrayX - 1) / 2) * arraySpacing;
+      const xMax = ((arrayX - 1) / 2) * arraySpacing;
+      const yMin = -((arrayY - 1) / 2) * arraySpacing;
+      const yMax = ((arrayY - 1) / 2) * arraySpacing;
+
+      return [
+        [xMin - arraySpacing, yMin - arraySpacing],
+        [xMax + arraySpacing, yMax + arraySpacing],
+        [xMin - arraySpacing, yMax + arraySpacing],
+        [xMax + arraySpacing, yMin - arraySpacing]
+      ];
+    }
+
+    function buildCornerAnchorMeshes(enabled, diameter, arrayX, arrayY, arraySpacing) {
+      if (!enabled) {
+        return [];
+      }
+      const baseZ = -diameter / 2;
+      return cornerAnchorPositions(arrayX, arrayY, arraySpacing)
+        .map(([x, y]) => buildAnchorPyramidMesh(x, y, baseZ, diameter));
+    }
+
     function triangleNormal(tri) {
       return normalize(cross(subtract(tri.v2, tri.v1), subtract(tri.v3, tri.v1)));
     }
@@ -554,18 +866,74 @@
       return value.toFixed(3).replace(/\.?0+$/, "").replace(".", "p");
     }
 
-    function makeFileName(diameter, voidShape, voidSize, arrayX, arrayY, arraySpacing, splitHalf, exportFormat) {
+    function makeFileName(
+      diameter,
+      voidShape,
+      voidSize,
+      arrayX,
+      arrayY,
+      arraySpacing,
+      splitHalf,
+      cornerAnchors,
+      exportFormat
+    ) {
       const dText = formatDimension(diameter);
       const arraySuffix = (arrayX === 1 && arrayY === 1)
         ? ""
         : `_arr_${arrayX}x${arrayY}_s${formatDimension(arraySpacing)}mm`;
-      const splitSuffix = splitHalf === "none" ? "" : `_half_${splitHalf}`;
+      const splitSuffix = splitHalf === "none"
+        ? ""
+        : (splitHalf === "both" ? "_split_both" : `_half_${splitHalf}`);
+      const anchorSuffix = cornerAnchors ? "_anchors" : "";
 
       if (voidShape === "none") {
-        return `sphere_${dText}mm${splitSuffix}_solid${arraySuffix}.${exportFormat}`;
+        return `sphere_${dText}mm${splitSuffix}_solid${arraySuffix}${anchorSuffix}.${exportFormat}`;
       }
       const sText = formatDimension(voidSize);
-      return `sphere_${dText}mm${splitSuffix}_void_${voidShape}_${sText}mm${arraySuffix}.${exportFormat}`;
+      return `sphere_${dText}mm${splitSuffix}_void_${voidShape}_${sText}mm${arraySuffix}${anchorSuffix}.${exportFormat}`;
+    }
+
+    function build3mfBodyNames(modelName, splitHalf, sphereBodyCount, anchorBodyCount) {
+      const names = [];
+      if (splitHalf === "both") {
+        if (sphereBodyCount % 2 !== 0) {
+          throw new Error("split=both expects an even number of sphere bodies.");
+        }
+        const perHalf = Math.floor(sphereBodyCount / 2);
+        for (let i = 1; i <= perHalf; i += 1) {
+          names.push(`${modelName}_${i}_A`);
+        }
+        for (let i = 1; i <= perHalf; i += 1) {
+          names.push(`${modelName}_${i}_B`);
+        }
+      } else if (splitHalf === "up") {
+        if (sphereBodyCount === 1) {
+          names.push(`${modelName}_A`);
+        } else {
+          for (let i = 1; i <= sphereBodyCount; i += 1) {
+            names.push(`${modelName}_${i}_A`);
+          }
+        }
+      } else if (splitHalf === "down") {
+        if (sphereBodyCount === 1) {
+          names.push(`${modelName}_B`);
+        } else {
+          for (let i = 1; i <= sphereBodyCount; i += 1) {
+            names.push(`${modelName}_${i}_B`);
+          }
+        }
+      } else if (sphereBodyCount === 1) {
+        names.push(modelName);
+      } else {
+        for (let i = 1; i <= sphereBodyCount; i += 1) {
+          names.push(`${modelName}_${i}`);
+        }
+      }
+
+      for (let i = 1; i <= anchorBodyCount; i += 1) {
+        names.push(`anchor_${i}`);
+      }
+      return names;
     }
 
     function buildAsciiStl(solidName, triangles) {
@@ -616,7 +984,10 @@
       return { vertices, triangleIndices };
     }
 
-    function build3mfModelXml(modelName, meshList) {
+    function build3mfModelXml(modelName, meshList, bodyNames = null) {
+      if (bodyNames !== null && bodyNames.length !== meshList.length) {
+        throw new Error("3MF body names length must match mesh count.");
+      }
       const lines = [];
       lines.push('<?xml version="1.0" encoding="UTF-8"?>');
       lines.push('<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">');
@@ -624,7 +995,9 @@
       for (let objId = 0; objId < meshList.length; objId += 1) {
         const triangles = meshList[objId];
         const indexed = buildIndexedMesh(triangles);
-        const bodyName = meshList.length === 1 ? modelName : `${modelName}_${objId + 1}`;
+        const bodyName = bodyNames !== null
+          ? bodyNames[objId]
+          : (meshList.length === 1 ? modelName : `${modelName}_${objId + 1}`);
         lines.push(`    <object id="${objId + 1}" type="model" name="${xmlEscape(bodyName)}">`);
         lines.push("      <mesh>");
         lines.push("        <vertices>");
@@ -764,7 +1137,7 @@
       return concatUint8Arrays([...localParts, ...centralParts, endOfCentral]);
     }
 
-    function build3mfBlob(modelName, meshList) {
+    function build3mfBlob(modelName, meshList, bodyNames = null) {
       const encoder = new TextEncoder();
       const contentTypesXml = `<?xml version="1.0" encoding="UTF-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -777,7 +1150,7 @@
   <Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
 </Relationships>
 `;
-      const modelXml = build3mfModelXml(modelName, meshList);
+      const modelXml = build3mfModelXml(modelName, meshList, bodyNames);
       const zipBytes = createStoredZip([
         { name: "[Content_Types].xml", data: encoder.encode(contentTypesXml) },
         { name: "_rels/.rels", data: encoder.encode(rootRelsXml) },
@@ -814,26 +1187,19 @@
     const arrayYEl = document.getElementById("array-y");
     const arraySpacingEl = document.getElementById("array-spacing");
     const arraySpacingHintEl = document.getElementById("array-spacing-hint");
+    const cornerAnchorsEl = document.getElementById("corner-anchors");
     const exportFormatEl = document.getElementById("export-format");
 
     function updateVoidUi() {
       const splitHalf = splitHalfEl.value;
-      const splitEnabled = splitHalf !== "none";
-
-      if (splitEnabled && voidShapeEl.value !== "none") {
-        voidShapeEl.value = "none";
-      }
-      voidShapeEl.disabled = splitEnabled;
-
-      if (splitEnabled) {
-        voidSizeEl.disabled = true;
-        voidSizeLabelEl.textContent = "Void Size (mm)";
-        voidSizeHintEl.textContent = "Internal void is disabled when split-half mode is enabled.";
-        splitHalfHintEl.textContent = "Split mode creates a watertight hemisphere with a flat face at Z=0.";
-        return;
+      if (splitHalf === "both") {
+        splitHalfHintEl.textContent = "Both halves are generated after void subtraction; 3MF exports them as separate bodies.";
+      } else if (splitHalf === "up" || splitHalf === "down") {
+        splitHalfHintEl.textContent = "Split mode creates one watertight half with a flat face at Z=0.";
+      } else {
+        splitHalfHintEl.textContent = "None keeps the full sphere.";
       }
 
-      splitHalfHintEl.textContent = "None keeps the full sphere.";
       const shape = voidShapeEl.value;
       const hasVoid = shape !== "none";
       voidSizeEl.disabled = !hasVoid;
@@ -851,24 +1217,39 @@
       }
 
       voidSizeLabelEl.textContent = "Void Cube Edge Length (mm)";
-      voidSizeHintEl.textContent = "The cube must fit entirely inside the sphere.";
+      voidSizeHintEl.textContent = "The cube diagonal at z=0 must fit inside the sphere (larger corner-overlap is allowed).";
     }
 
     function updateArraySpacingUi() {
       const arrayX = Number(arrayXEl.value);
       const arrayY = Number(arrayYEl.value);
-      const needsSpacing = (Number.isInteger(arrayX) && arrayX > 1) || (Number.isInteger(arrayY) && arrayY > 1);
+      const anchorsEnabled = cornerAnchorsEl.value === "on";
+      const needsSpacing =
+        anchorsEnabled ||
+        (Number.isInteger(arrayX) && arrayX > 1) ||
+        (Number.isInteger(arrayY) && arrayY > 1);
       arraySpacingEl.disabled = !needsSpacing;
-      arraySpacingHintEl.textContent = needsSpacing
-        ? "Center-to-center distance used along X and Y."
-        : "Single object (1x1): spacing is ignored.";
+      if (anchorsEnabled) {
+        arraySpacingHintEl.textContent =
+          "Center-to-center spacing is also used to place corner anchors one spacing outside the array.";
+      } else {
+        arraySpacingHintEl.textContent = needsSpacing
+          ? "Center-to-center distance used along X and Y."
+          : "Single object (1x1): spacing is ignored.";
+      }
     }
 
     const previewCanvas = document.getElementById("preview-canvas");
     const previewNoteEl = document.getElementById("preview-note");
+    const zoomOutEl = document.getElementById("zoom-out");
+    const zoomInEl = document.getElementById("zoom-in");
+    const zoomResetEl = document.getElementById("zoom-reset");
+    const zoomLevelEl = document.getElementById("zoom-level");
     const previewCtx = previewCanvas.getContext("2d");
     let previewTriangles = [];
+    let previewModelRadius = 1;
     let previewAngle = 0;
+    let previewZoom = 1;
 
     function clamp01(v) {
       if (v < 0) {
@@ -878,6 +1259,36 @@
         return 1;
       }
       return v;
+    }
+
+    function clamp(v, min, max) {
+      return Math.min(max, Math.max(min, v));
+    }
+
+    function updateZoomLevelText() {
+      zoomLevelEl.textContent = `${Math.round(previewZoom * 100)}%`;
+    }
+
+    function setPreviewZoom(nextZoom) {
+      previewZoom = clamp(nextZoom, PREVIEW_MIN_ZOOM, PREVIEW_MAX_ZOOM);
+      updateZoomLevelText();
+    }
+
+    function estimateMeshRadius(triangles) {
+      let maxRadius = 1;
+      for (const tri of triangles) {
+        for (const vertex of [tri.v1, tri.v2, tri.v3]) {
+          const radius = Math.sqrt(
+            vertex[0] * vertex[0] +
+            vertex[1] * vertex[1] +
+            vertex[2] * vertex[2]
+          );
+          if (radius > maxRadius) {
+            maxRadius = radius;
+          }
+        }
+      }
+      return maxRadius;
     }
 
     function rotatePoint(point, yaw, pitch) {
@@ -922,23 +1333,19 @@
       const yaw = previewAngle;
       const pitch = -0.62;
       const transformed = [];
-      let maxAbs = 1.0;
 
       for (const tri of previewTriangles) {
         const a = rotatePoint(tri.v1, yaw, pitch);
         const b = rotatePoint(tri.v2, yaw, pitch);
         const c = rotatePoint(tri.v3, yaw, pitch);
         transformed.push({ a, b, c });
-        maxAbs = Math.max(
-          maxAbs,
-          Math.abs(a[0]), Math.abs(a[1]), Math.abs(a[2]),
-          Math.abs(b[0]), Math.abs(b[1]), Math.abs(b[2]),
-          Math.abs(c[0]), Math.abs(c[1]), Math.abs(c[2])
-        );
       }
 
-      const cameraDistance = maxAbs * 3.4;
-      const scale = Math.min(width, height) * 0.94;
+      const baseRadius = Math.max(previewModelRadius, 1e-6);
+      const baseCameraDistance = baseRadius * PREVIEW_BASE_CAMERA_DISTANCE_FACTOR;
+      const minCameraDistance = baseRadius * 1.25;
+      const cameraDistance = Math.max(minCameraDistance, baseCameraDistance / previewZoom);
+      const scale = Math.min(width, height) * 0.92;
       const centerX = width / 2;
       const centerY = height / 2;
       const lightDir = normalize([0.4, -0.85, 0.55]);
@@ -983,28 +1390,54 @@
       const arrayX = Number(arrayXEl.value);
       const arrayY = Number(arrayYEl.value);
       const arraySpacing = Number(arraySpacingEl.value);
+      const cornerAnchors = cornerAnchorsEl.value === "on";
 
       const notes = [];
       try {
-        const baseMesh = buildObjectMesh(
+        const previewSplitHalf = splitHalf === "both" ? "none" : splitHalf;
+        if (splitHalf === "both") {
+          notes.push("Preview does not show split-both; download output still uses separate up/down halves.");
+        }
+
+        let previewBodies = buildTiledSphereMeshes(
           diameter,
           PREVIEW_LAT_SEGMENTS,
           PREVIEW_LON_SEGMENTS,
           voidShape,
           voidSize,
-          splitHalf
+          previewSplitHalf,
+          1,
+          1,
+          1
         );
 
-        let mesh = baseMesh;
         if (Number.isInteger(arrayX) && Number.isInteger(arrayY)) {
           const objectCount = arrayX * arrayY;
           if (objectCount <= PREVIEW_MAX_OBJECTS) {
-            mesh = tileMesh2D(baseMesh, arrayX, arrayY, arraySpacing);
+            previewBodies = buildTiledSphereMeshes(
+              diameter,
+              PREVIEW_LAT_SEGMENTS,
+              PREVIEW_LON_SEGMENTS,
+              voidShape,
+              voidSize,
+              previewSplitHalf,
+              arrayX,
+              arrayY,
+              arraySpacing
+            );
           } else {
-            notes.push(`Array has ${objectCount} objects, preview shows one object for speed.`);
+            notes.push(`Array has ${objectCount} objects, preview shows one position for speed.`);
           }
         }
 
+        if (cornerAnchors) {
+          previewBodies = previewBodies.concat(
+            buildCornerAnchorMeshes(true, diameter, arrayX, arrayY, arraySpacing)
+          );
+        }
+
+        let mesh = flattenMeshList(previewBodies);
+        previewModelRadius = estimateMeshRadius(mesh);
         if (mesh.length > PREVIEW_TRIANGLE_LIMIT) {
           const step = Math.ceil(mesh.length / PREVIEW_TRIANGLE_LIMIT);
           mesh = mesh.filter((_, idx) => idx % step === 0);
@@ -1018,6 +1451,7 @@
         previewNoteEl.className = "hint";
       } catch (error) {
         previewTriangles = [];
+        previewModelRadius = 1;
         previewNoteEl.textContent = error instanceof Error ? error.message : "Preview failed.";
         previewNoteEl.className = "hint err";
       }
@@ -1039,11 +1473,24 @@
     arrayXEl.addEventListener("input", refreshUiAndPreview);
     arrayYEl.addEventListener("input", refreshUiAndPreview);
     arraySpacingEl.addEventListener("input", refreshUiAndPreview);
+    cornerAnchorsEl.addEventListener("change", refreshUiAndPreview);
     diameterEl.addEventListener("input", refreshUiAndPreview);
     voidSizeEl.addEventListener("input", refreshUiAndPreview);
 
     exportFormatEl.addEventListener("change", refreshPreviewMesh);
+    previewCanvas.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      if (event.deltaY < 0) {
+        setPreviewZoom(previewZoom * 1.1);
+      } else {
+        setPreviewZoom(previewZoom / 1.1);
+      }
+    }, { passive: false });
+    zoomInEl.addEventListener("click", () => setPreviewZoom(previewZoom * 1.2));
+    zoomOutEl.addEventListener("click", () => setPreviewZoom(previewZoom / 1.2));
+    zoomResetEl.addEventListener("click", () => setPreviewZoom(1.0));
 
+    updateZoomLevelText();
     refreshUiAndPreview();
     animationLoop();
 
@@ -1056,28 +1503,43 @@
       const arrayX = Number(arrayXEl.value);
       const arrayY = Number(arrayYEl.value);
       const arraySpacing = Number(arraySpacingEl.value);
+      const cornerAnchors = cornerAnchorsEl.value === "on";
       const exportFormat = exportFormatEl.value;
 
       button.disabled = true;
       button.textContent = "Generating...";
 
       try {
-        const baseTriangles = buildObjectMesh(
+        const sphereMeshList = buildTiledSphereMeshes(
           diameter,
           LAT_SEGMENTS,
           LON_SEGMENTS,
           voidShape,
           voidSize,
-          splitHalf
+          splitHalf,
+          arrayX,
+          arrayY,
+          arraySpacing
         );
-        const triangles = tileMesh2D(baseTriangles, arrayX, arrayY, arraySpacing);
-        const objectCount = arrayX * arrayY;
+        const anchorMeshList = buildCornerAnchorMeshes(
+          cornerAnchors,
+          diameter,
+          arrayX,
+          arrayY,
+          arraySpacing
+        );
+        const meshList = sphereMeshList.concat(anchorMeshList);
+        const triangles = flattenMeshList(meshList);
+        const sphereInstances = arrayX * arrayY;
+        const bodyCount = meshList.length;
 
         let solidName = "sphere_solid";
         if (splitHalf === "up") {
           solidName = "sphere_upper_half";
         } else if (splitHalf === "down") {
           solidName = "sphere_lower_half";
+        } else if (splitHalf === "both") {
+          solidName = "sphere_split_halves";
         } else if (voidShape !== "none") {
           solidName = `sphere_with_${voidShape}_void`;
         }
@@ -1090,6 +1552,7 @@
           arrayY,
           arraySpacing,
           splitHalf,
+          cornerAnchors,
           exportFormat
         );
 
@@ -1097,24 +1560,13 @@
           const stlText = buildAsciiStl(solidName, triangles);
           downloadBlob(fileName, new Blob([stlText], { type: "model/stl" }));
         } else if (exportFormat === "3mf") {
-          const meshList = (arrayX > 1 || arrayY > 1)
-            ? (() => {
-              const list = [];
-              const xCenter = (arrayX - 1) / 2;
-              const yCenter = (arrayY - 1) / 2;
-              for (let yi = 0; yi < arrayY; yi += 1) {
-                const dy = (yi - yCenter) * arraySpacing;
-                for (let xi = 0; xi < arrayX; xi += 1) {
-                  const dx = (xi - xCenter) * arraySpacing;
-                  list.push(
-                    baseTriangles.map((tri) => offsetTriangle(tri, dx, dy, 0))
-                  );
-                }
-              }
-              return list;
-            })()
-            : [baseTriangles];
-          downloadBlob(fileName, build3mfBlob(solidName, meshList));
+          const bodyNames = build3mfBodyNames(
+            solidName,
+            splitHalf,
+            sphereMeshList.length,
+            anchorMeshList.length
+          );
+          downloadBlob(fileName, build3mfBlob(solidName, meshList, bodyNames));
         } else {
           throw new Error(`Unsupported export format: ${exportFormat}`);
         }
@@ -1122,8 +1574,9 @@
         const voidText = voidShape === "none" ? "no internal void" : `void=${voidShape} (${voidSize} mm)`;
         const splitText = splitHalf === "none" ? "full sphere" : `split=${splitHalf}`;
         const arrayText = `array=${arrayX}x${arrayY}${(arrayX > 1 || arrayY > 1) ? ` @ ${arraySpacing} mm` : ""}`;
+        const anchorText = `anchors=${cornerAnchors ? "on" : "off"}`;
         setStatus(
-          `Done. Downloaded ${fileName} (${exportFormat.toUpperCase()}), facets=${triangles.length}, ${splitText}, ${voidText}, ${arrayText}, objects=${objectCount}.`,
+          `Done. Downloaded ${fileName} (${exportFormat.toUpperCase()}), facets=${triangles.length}, ${splitText}, ${voidText}, ${arrayText}, ${anchorText}, sphere_instances=${sphereInstances}, bodies=${bodyCount}.`,
           false
         );
       } catch (error) {
