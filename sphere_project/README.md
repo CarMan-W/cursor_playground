@@ -21,7 +21,9 @@ diameter, preview geometry, choose internal options, and download STL/3MF
 directly.
 
 ### Run
+Try the Web UI: https://carman-w.github.io/cursor_playground/
 
+Or run it locally:
 ```bash
 cd sphere_project
 python3 generate_sphere_stl.py
